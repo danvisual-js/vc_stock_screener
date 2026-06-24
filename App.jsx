@@ -862,6 +862,3 @@ export default function StockScreener() {
     </div>
   );
 }
-// This connects your JSX logic directly to the HTML container
-const root = KinneyDom || ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
