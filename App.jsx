@@ -19,8 +19,8 @@ const BASE_NAMES = {
 const INDICES = [
   {s:"SPY", name:"S&P 500",    p:730.21, pc:721.80},
   {s:"QQQ", name:"Nasdaq 100", p:498.70, pc:492.10},
-  {s:"DJI", name:"Dow Jones",  p:43215,  pc:42450 },
-  {s:"VIX", name:"VIX",        p:16.23,  pc:18.20 },
+  {s:"DIA", name:"SPDR Dow Jones",  p:43215,  pc:42450 },
+  {s:"VIXY", name:"VIX Futures",        p:16.23,  pc:18.20 },
 ];
 
 const DEFAULT_TABS = [
@@ -1108,4 +1108,3 @@ export default function StockScreener(){
     </div>
   );
 }
-  
