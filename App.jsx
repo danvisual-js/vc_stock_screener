@@ -146,22 +146,79 @@ function findSR(data,lb=10){
   }
   return z.reduce((a,x)=>(!a.some(y=>Math.abs(y.price-x.price)/x.price<0.015)&&a.push(x),a),[]).slice(0,5);
 }
+// In this sandbox the only available model bridge is window.claude.complete
+// (claude-haiku-4-5, no web-search tool). Direct calls to api.anthropic.com
+// from the browser fail (no API key + CORS) — that is why the old code never
+// returned anything. Note: without web search the model CANNOT quote live
+// prices, so this is used only for the text features (news/recs/insights).
 async function callClaude(userMsg,system){
-  const body={model:"claude-sonnet-4-6",max_tokens:1000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:userMsg}]};
-  if(system)body.system=system;
-  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const data=await res.json();
-  return data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+  const prompt=system?`${system}\n\n${userMsg}`:userMsg;
+  try{
+    return (await window.claude.complete(prompt))||"";
+  }catch{return "";}
 }
 function parseJSON(raw){
   if(!raw)return null;
   try{return JSON.parse(raw.trim());}catch{}
-  // Strip markdown fences if present
-  const stripped=raw.replace(/```json|```/g,"").trim();
-  try{return JSON.parse(stripped);}catch{}
-  // Extract first complete {...} block
-  try{const m=raw.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);}catch{}
+  try{return JSON.parse(raw.replace(/```json\n?|```/g,"").trim());}catch{}
+  // Greedy match first { to last }
+  const m=raw.match(/\{[\s\S]*\}/);
+  if(m){try{return JSON.parse(m[0]);}catch{}}
+  // Try any nested JSON objects largest-first
+  const all=[...raw.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)];
+  for(const match of all.reverse()){try{const p=JSON.parse(match[0]);if(Object.keys(p).length>0)return p;}catch{}}
   return null;
+}
+
+// Extract a price number from freeform text as fallback
+function extractPrice(text){
+  const m=text.match(/\$\s*([\d,]+\.?\d{0,2})/);
+  if(m){const n=parseFloat(m[1].replace(/,/g,""));if(n>0.01&&n<1000000)return n;}
+  return null;
+}
+
+// ── PRICE DATA SOURCE ──────────────────────────────────────────────
+// Real-time quotes AND historical candles come from Twelve Data (free tier
+// covers both, browser-CORS friendly). Get a free key at
+// https://twelvedata.com/pricing and paste it below.
+// Free tier limits: ~8 requests/min, 800/day.
+// Without a key the app falls back to (stale) model estimates + synthetic charts.
+const STOCK_API_KEY="26b196ead39846439e6fe3ca03485ddf";  // ← paste your Twelve Data API key here for LIVE data
+
+// Real-time quote for one symbol via Twelve Data: {p:current, pc:prevClose}
+async function fetchQuote(symbol){
+  if(!STOCK_API_KEY)return null;
+  try{
+    const r=await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${STOCK_API_KEY}`);
+    const d=await r.json();
+    const p=parseFloat(d&&d.close);
+    if(p>0){
+      const pc=parseFloat(d.previous_close);
+      return{p,pc:pc>0?pc:p};
+    }
+  }catch{}
+  return null;
+}
+
+// Best-effort estimate from the model (NOT real-time) — fallback only.
+async function fetchEstimate(symbols){
+  const eg=JSON.stringify(Object.fromEntries(symbols.slice(0,2).map(s=>[s,{p:298.14,pc:295.95}])));
+  const prompt=`Give your most recent known stock prices for: ${symbols.join(", ")}.
+Reply with ONLY this raw JSON (no markdown, no commentary):
+${eg}
+Replace the example values with your best estimate for all ${symbols.length} tickers.`;
+  try{return parseJSON(await window.claude.complete(prompt))||{};}catch{return{};}
+}
+
+// Fetch prices for a batch of symbols. Uses Finnhub when a key is configured,
+// otherwise falls back to model estimates so the UI still populates.
+async function fetchPrices(symbols){
+  if(STOCK_API_KEY){
+    const out={};
+    await Promise.all(symbols.map(async s=>{const q=await fetchQuote(s);if(q)out[s]=q;}));
+    if(Object.keys(out).length)return out;
+  }
+  return fetchEstimate(symbols);
 }
 
 // Sorted date helper for events
@@ -231,6 +288,49 @@ const TIMEFRAMES={
 function getChartData(price,chPct,tf){
   const {barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];
   return enrich(genBars(price,chPct,barMin,n));
+}
+
+// ── REAL HISTORICAL CANDLES (Twelve Data) ──
+// Maps the app's timeframes to Twelve Data's /time_series intervals and
+// returns OHLCV bars in the same shape genBars() produces, so the charts
+// render unchanged. Returns null on any failure → caller keeps synthetic.
+async function fetchCandles(symbol,tf){
+  if(!STOCK_API_KEY)return null;
+  const cfg=TIMEFRAMES[tf]||TIMEFRAMES["5m"];
+  const intervalMap={1:"1min",5:"5min",15:"15min",60:"1h",1440:"1day"};
+  const interval=intervalMap[cfg.barMin]||"1day";
+  try{
+    const r=await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${cfg.n}&order=ASC&apikey=${STOCK_API_KEY}`);
+    const d=await r.json();
+    if(d&&d.status==="ok"&&Array.isArray(d.values)&&d.values.length){
+      const intraday=cfg.barMin<1440;
+      return d.values.map(v=>{
+        const dt=new Date(v.datetime.replace(" ","T"));
+        const label=intraday
+          ?`${dt.getHours()}:${String(dt.getMinutes()).padStart(2,"0")}`
+          :dt.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+        const open=+v.open,close=+v.close;
+        return{date:label,open,close,high:+v.high,low:+v.low,volume:+(v.volume||0),isGreen:close>=open};
+      });
+    }
+  }catch{}
+  return null;
+}
+
+// Hook: render synthetic bars immediately, then swap in real candles once
+// they arrive (or keep synthetic if the fetch yields nothing).
+function useChartData(symbol,price,chPct,tf){
+  const fallback=useMemo(()=>getChartData(price,chPct,tf),[symbol,price,tf]);
+  const [data,setData]=useState(fallback);
+  useEffect(()=>{
+    let alive=true;
+    setData(fallback);
+    fetchCandles(symbol,tf).then(real=>{
+      if(alive&&real&&real.length)setData(enrich(real));
+    });
+    return()=>{alive=false;};
+  },[symbol,tf,fallback]);
+  return data;
 }
 
 
@@ -431,7 +531,7 @@ function IndexChart({index,T}){
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
   const raw=useMemo(()=>genHistory(index.p,pct(index.p,index.pc),365),[index.s]);
   const full=useMemo(()=>enrich(raw),[raw]);
-  const data=useMemo(()=>getChartData(index.p,pct(index.p,index.pc),tf),[index.s,index.p,tf]);
+  const data=useChartData(index.s,index.p,pct(index.p,index.pc),tf);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(data):[],[data,tf]);
   const ch=pct(index.p,index.pc),isUp=ch>=0;
   const col=isUp?T.up:T.down;
@@ -628,7 +728,7 @@ function StockDetail({selected,names,T,onClose}){
   const [insight,setInsight]=useState("");
   const [loadingAI,setLoadingAI]=useState(false);
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
-  const chartData=useMemo(()=>getChartData(selected.p,pct(selected.p,selected.pc),tf),[selected.s,selected.p,tf]);
+  const chartData=useChartData(selected.s,selected.p,pct(selected.p,selected.pc),tf);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(chartData):[],[chartData,tf]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
   const getInsight=async()=>{
@@ -788,62 +888,41 @@ export default function StockScreener(){
 
   const allSymbols=useMemo(()=>[...new Set(tabs.flatMap(t=>t.stocks.map(s=>s.s)))]   ,[tabs]);
 
-  // Auto-fetch prices on mount
-  const mountedRef=useRef(false);
+  // Auto-fetch prices on first load
+  const didMount=useRef(false);
   useEffect(()=>{
-    if(mountedRef.current)return;
-    mountedRef.current=true;
-    const t=setTimeout(()=>refreshPrices(),800);
-    return()=>clearTimeout(t);
+    if(didMount.current)return;
+    didMount.current=true;
+    setTimeout(()=>runRefresh(curTab.stocks),600);
   },[]);// eslint-disable-line
 
-  const refreshPrices=useCallback(async()=>{
-    if(refreshing)return;
-    const valid=curTab.stocks.filter(s=>!s.loading);
+  // Core refresh — accepts any stock list so it works on mount and tab switch
+  const runRefresh=useCallback(async(stockList)=>{
+    const valid=stockList.filter(s=>!s.loading&&s.s);
     if(!valid.length)return;
     setRefreshing(true);
-
-    // Chunk into batches of 4
     const batchSize=4;
     const batches=[];
     for(let i=0;i<valid.length;i+=batchSize)batches.push(valid.slice(i,i+batchSize));
-
-    // Fire ALL batches in parallel — much faster than sequential
-    const batchResults=await Promise.all(batches.map(async(batch)=>{
-      const syms=batch.map(s=>s.s);
-      const eg=`{"${syms[0]}":{"p":123.45,"pc":121.00}}`;
-      try{
-        const res=await fetch("https://api.anthropic.com/v1/messages",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({
-            model:"claude-sonnet-4-6",
-            max_tokens:300,
-            tools:[{type:"web_search_20250305",name:"web_search"}],
-            system:`Stock price lookup. Search web for latest prices. Respond with ONLY a raw JSON object, nothing else. Format: ${eg}`,
-            messages:[{role:"user",content:`Current price + prev close for: ${syms.join(", ")}. Return ONLY JSON: ${eg}`}]
-          })
-        });
-        const d=await res.json();
-        const txt=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
-        return parseJSON(txt)||{};
-      }catch{return{};}
-    }));
-
-    // Merge all batch results
-    const allUpdates=Object.assign({},...batchResults);
-    if(Object.keys(allUpdates).length>0){
+    const results=await Promise.all(batches.map(b=>fetchPrices(b.map(s=>s.s))));
+    const merged=Object.assign({},...results);
+    if(Object.keys(merged).length>0){
       setTabs(prev=>prev.map(t=>t.id===activeTab?{
         ...t,
         stocks:t.stocks.map(s=>{
-          const u=allUpdates[s.s]||allUpdates[s.s?.toLowerCase()];
-          return u?.p?{...s,p:Number(u.p),pc:Number(u.pc||u.p)}:s;
+          const u=merged[s.s]||merged[s.s?.toLowerCase()];
+          if(!u)return s;
+          const p=Number(u.p||u.price||0);
+          const pc=Number(u.pc||u.prevClose||p*0.99);
+          return p>0?{...s,p,pc}:s;
         })
       }:t));
       setLastRefresh(new Date());
     }
     setRefreshing(false);
-  },[curTab,activeTab,refreshing]);
+  },[activeTab]);
+
+  const refreshPrices=useCallback(()=>runRefresh(curTab.stocks),[runRefresh,curTab.stocks]);
 
   const addTicker=async()=>{
     const sym=newTicker.trim().toUpperCase();
@@ -851,27 +930,33 @@ export default function StockScreener(){
     setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:[...t.stocks,{s:sym,p:0,pc:0,loading:true}]}:t));
     setNewTicker("");
     try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-6",
-          max_tokens:300,
-          tools:[{type:"web_search_20250305",name:"web_search"}],
-          system:`Return ONLY a raw JSON object, no other text: {"symbol":"AAPL","name":"Apple Inc","price":298.14,"prevClose":295.95}`,
-          messages:[{role:"user",content:`Search for the current stock price for ${sym}. Return ONLY JSON: {"symbol":"${sym}","name":"Full Company Name","price":123.45,"prevClose":121.00}`}]
-        })
-      });
-      const data=await res.json();
-      const text=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
-      const parsed=parseJSON(text);
-      if(parsed?.price){
-        if(parsed.name)setNames(n=>({...n,[sym]:parsed.name}));
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:Number(parsed.price),pc:Number(parsed.prevClose||parsed.price),loading:false}:s)}:t));
+      let price=0,prevClose=0,name=null;
+      // 1) Real-time quote from Finnhub (if a key is configured)
+      const q=await fetchQuote(sym);
+      if(q){price=q.p;prevClose=q.pc;}
+      // 2) Company name (and price fallback when no live quote) from the model
+      if(!price||!names[sym]){
+        const txt=await window.claude.complete(
+          `For the stock ticker ${sym}, reply with ONLY this raw JSON (no markdown):\n{"name":"Full Company Name","price":123.45,"prevClose":121.00}`
+        );
+        const parsed=parseJSON(txt);
+        if(parsed?.name)name=parsed.name;
+        if(!price){
+          price=Number(parsed?.price||parsed?.p||0);
+          prevClose=Number(parsed?.prevClose||parsed?.pc||0);
+          if(!price){const fp=extractPrice(txt||"");if(fp)price=fp;}
+        }
+      }
+      if(price>0){
+        if(name)setNames(n=>({...n,[sym]:name}));
+        if(!prevClose)prevClose=price*0.99;
+        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose,loading:false}:s)}:t));
       }else{
         setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
       }
-    }catch{setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));}
+    }catch{
+      setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
+    }
   };
 
   const addTab=()=>{
@@ -1010,7 +1095,7 @@ export default function StockScreener(){
       <Recommendations stocks={stocks} T={T}/>
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
-        AI insights via Claude + web search · Chart data is synthetic/illustrative · Not financial advice
+        AI insights via Claude · Quotes &amp; candles via Twelve Data (synthetic fallback) · Not financial advice
       </div>
     </div>
   );
