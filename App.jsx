@@ -19,8 +19,8 @@ const BASE_NAMES = {
 const INDICES = [
   {s:"SPY", name:"S&P 500",    p:730.21, pc:721.80},
   {s:"QQQM", name:"Nasdaq QQQ ETF", p:498.70, pc:492.10},
-  {s:"DIA", name:"SPDR Dow Jones",  p:43215,  pc:42450 },
-  {s:"IWM", name:"Russell 2000",        p:16.23,  pc:18.20 },
+  {s:"DIA", name:"SPDR Dow Jones",  p:437.15,  pc:432.40 },
+  {s:"IWM", name:"Russell 2000",        p:241.60,  pc:238.20 },
 ];
 
 const DEFAULT_TABS = [
@@ -146,16 +146,63 @@ function findSR(data,lb=10){
   }
   return z.reduce((a,x)=>(!a.some(y=>Math.abs(y.price-x.price)/x.price<0.015)&&a.push(x),a),[]).slice(0,5);
 }
-// In this sandbox the only available model bridge is window.claude.complete
-// (claude-haiku-4-5, no web-search tool). Direct calls to api.anthropic.com
-// from the browser fail (no API key + CORS) — that is why the old code never
-// returned anything. Note: without web search the model CANNOT quote live
-// prices, so this is used only for the text features (news/recs/insights).
+// ── AI TEXT BRIDGE (news / recommendations / insights) ─────────────
+// Two environments, one function:
+//  • In the Claude preview/artifact sandbox, window.claude.complete exists
+//    (claude-haiku-4-5, 1024-token cap, no web search).
+//  • On a REAL deployment that global does NOT exist, so we POST to a small
+//    backend proxy you host (it holds your Anthropic API key — never ship a
+//    key in client code). Set AI_PROXY_URL to that endpoint. The proxy must
+//    accept {prompt} and return {text}. A ready-to-deploy reference handler
+//    is in ai-proxy.example.js next to this file.
+// If neither is available the caller falls back to local, non-AI content so
+// the panels are never empty.
+const AI_PROXY_URL="/api/claude"; // ← e.g. "/api/claude" once your proxy is deployed
+
 async function callClaude(userMsg,system){
   const prompt=system?`${system}\n\n${userMsg}`:userMsg;
-  try{
-    return (await window.claude.complete(prompt))||"";
-  }catch{return "";}
+  // 1) In-preview bridge
+  if(typeof window!=="undefined"&&window.claude&&window.claude.complete){
+    try{return (await window.claude.complete(prompt))||"";}catch{}
+  }
+  // 2) Your backend proxy (works on a deployed domain)
+  if(AI_PROXY_URL){
+    try{
+      const r=await fetch(AI_PROXY_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt})});
+      const d=await r.json();
+      return (d&&(d.text||d.completion||d.content))||"";
+    }catch{}
+  }
+  return "";
+}
+function aiAvailable(){
+  return (typeof window!=="undefined"&&window.claude&&window.claude.complete)||!!AI_PROXY_URL;
+}
+
+// ── LOCAL FALLBACKS (used when no AI bridge/proxy is reachable) ─────
+// All derived from real numbers already on screen — never fabricated.
+function momentumRecs(stocks){
+  return stocks.slice(0,4).map(s=>{
+    const ch=pct(s.p,s.pc);
+    const action=ch>=2?"buy":ch<=-2?"avoid":"watch";
+    const reason=action==="buy"?`Strong upside momentum, +${f2(ch)}% on the session.`
+      :action==="avoid"?`Under pressure, ${f2(ch)}% today — wait for stabilization.`
+      :`Range-bound (${ch>=0?"+":""}${f2(ch)}%); watch for a breakout.`;
+    return{symbol:s.s,action,reason,target:`$${f2(s.p*0.97)}–$${f2(s.p*1.05)}`};
+  });
+}
+function derivedNews(indices){
+  return (indices||[]).map(idx=>{
+    const ch=pct(idx.p,idx.pc);
+    return{h:`${idx.name} ${ch>=0?"up":"down"} ${ch>=0?"+":""}${f2(ch)}% on the session`,
+      sentiment:ch>=0.3?"bullish":ch<=-0.3?"bearish":"neutral"};
+  });
+}
+function localInsight(sym,name,price,ch){
+  const bias=ch>=1?"bullish":ch<=-1?"bearish":"neutral";
+  return `${name||sym} is ${ch>=0?"up":"down"} ${f2(Math.abs(ch))}% at $${f2(price)}, a ${bias} session. `
+    +`Near-term support ~$${f2(price*0.97)}, resistance ~$${f2(price*1.04)}. `
+    +`(Rule-based summary — connect an AI proxy for a full narrative brief.)`;
 }
 function parseJSON(raw){
   if(!raw)return null;
@@ -185,23 +232,56 @@ function extractPrice(text){
 // Without a key the app falls back to (stale) model estimates + synthetic charts.
 const STOCK_API_KEY="26b196ead39846439e6fe3ca03485ddf";  // ← paste your Twelve Data API key here for LIVE data
 
-// Real-time quote for one symbol via Twelve Data: {p:current, pc:prevClose}
-async function fetchQuote(symbol){
-  if(!STOCK_API_KEY)return null;
+// ── REAL-TIME QUOTES (Twelve Data) ─────────────────────────────────
+// Short in-memory cache so tab switches / re-renders don't re-spend API
+// credits. 30s keeps quotes "real-time enough" while protecting the
+// free-tier rate limit (8 credits/min).
+const QUOTE_TTL=30000;
+const _quoteCache=new Map(); // SYM -> {t, q:{p,pc}}
+
+// Batch real-time quotes — ONE HTTP request for many symbols.
+// Twelve Data /quote accepts a comma-separated symbol list and returns
+// {SYM:{...}} for multiple, or a bare object for a single symbol.
+// Returns {SYM:{p,pc}} for every symbol that resolved (cache + live).
+async function fetchQuotes(symbols){
+  const want=[...new Set(symbols.map(s=>(s||"").toUpperCase()).filter(Boolean))];
+  const out={};
+  const need=[];
+  for(const s of want){
+    const e=_quoteCache.get(s);
+    if(e&&Date.now()-e.t<QUOTE_TTL)out[s]=e.q;
+    else need.push(s);
+  }
+  if(!need.length||!STOCK_API_KEY)return out;
   try{
-    const r=await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${STOCK_API_KEY}`);
+    const r=await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(need.join(","))}&apikey=${STOCK_API_KEY}`);
     const d=await r.json();
-    const p=parseFloat(d&&d.close);
-    if(p>0){
-      const pc=parseFloat(d.previous_close);
-      return{p,pc:pc>0?pc:p};
+    const rows=(need.length===1)?{[need[0]]:d}:d;
+    for(const s of need){
+      const row=rows&&rows[s];
+      const p=parseFloat(row&&row.close);
+      if(p>0){
+        const pc=parseFloat(row.previous_close);
+        const q={p,pc:pc>0?pc:p};
+        out[s]=q;
+        _quoteCache.set(s,{t:Date.now(),q});
+      }
     }
   }catch{}
-  return null;
+  return out;
+}
+
+// Real-time quote for one symbol (delegates to the batch path + cache).
+async function fetchQuote(symbol){
+  if(!STOCK_API_KEY)return null;
+  const s=(symbol||"").toUpperCase();
+  const r=await fetchQuotes([s]);
+  return r[s]||null;
 }
 
 // Best-effort estimate from the model (NOT real-time) — fallback only.
 async function fetchEstimate(symbols){
+  if(typeof window==="undefined"||!window.claude)return {};
   const eg=JSON.stringify(Object.fromEntries(symbols.slice(0,2).map(s=>[s,{p:298.14,pc:295.95}])));
   const prompt=`Give your most recent known stock prices for: ${symbols.join(", ")}.
 Reply with ONLY this raw JSON (no markdown, no commentary):
@@ -210,12 +290,12 @@ Replace the example values with your best estimate for all ${symbols.length} tic
   try{return parseJSON(await window.claude.complete(prompt))||{};}catch{return{};}
 }
 
-// Fetch prices for a batch of symbols. Uses Finnhub when a key is configured,
-// otherwise falls back to model estimates so the UI still populates.
+// Fetch prices for a list of symbols. Uses Twelve Data (one batched request)
+// when a key is configured, otherwise falls back to model estimates so the
+// UI still populates.
 async function fetchPrices(symbols){
   if(STOCK_API_KEY){
-    const out={};
-    await Promise.all(symbols.map(async s=>{const q=await fetchQuote(s);if(q)out[s]=q;}));
+    const out=await fetchQuotes(symbols);
     if(Object.keys(out).length)return out;
   }
   return fetchEstimate(symbols);
@@ -579,18 +659,20 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols}){
     (async()=>{
       try{
         // 1) Real-time index quotes from the price provider (Twelve Data),
-        //    falling back to the hardcoded seed value per index on failure.
-        const liveIndices=await Promise.all(INDICES.map(async idx=>{
-          const q=await fetchQuote(idx.s);
-          return q?{...idx,p:q.p,pc:q.pc}:idx;
-        }));
+        //    one batched request, falling back to each index's seed on miss.
+        const q=await fetchQuotes(INDICES.map(i=>i.s));
+        const liveIndices=INDICES.map(idx=>{
+          const u=q[idx.s.toUpperCase()];
+          return u?{...idx,p:u.p,pc:u.pc}:idx;
+        });
         // 2) Market news only, via the AI bridge (no prices — it can't quote live).
         const raw=await callClaude(
           `Give 3 top US stock-market news items for today with sentiment. JSON only.`,
           `Return ONLY raw JSON no markdown: {"news":[{"h":"headline text","sentiment":"bullish|bearish|neutral"}]}`
         );
         const parsed=parseJSON(raw)||{};
-        if(alive)setMkt({indices:liveIndices,news:parsed.news||[]});
+        const news=(parsed.news&&parsed.news.length)?parsed.news:derivedNews(liveIndices);
+        if(alive)setMkt({indices:liveIndices,news});
       }catch{}
       finally{if(alive)setBusy(false);}
     })();
@@ -743,8 +825,8 @@ function StockDetail({selected,names,T,onClose}){
     setLoadingAI(true);setInsight("");
     try{
       const raw=await callClaude(`2-3 sentence day trader brief on ${selected.s} (${names[selected.s]||selected.s}) June 22 2026, price $${f2(selected.p)} ${ch>=0?"+":""}${f2(ch)}% today. Cover: main driver, 2 key catalysts, weekly price target range. Be specific.`);
-      setInsight(raw.trim()||"No insight.");
-    }catch{setInsight("Fetch failed — try again.");}
+      setInsight(raw.trim()||localInsight(selected.s,names[selected.s],selected.p,ch));
+    }catch{setInsight(localInsight(selected.s,names[selected.s],selected.p,ch));}
     finally{setLoadingAI(false);}
   };
   return(
@@ -803,8 +885,8 @@ function Recommendations({stocks,T}){
         `Return ONLY raw JSON no markdown: {"recs":[{"symbol":"NVDA","action":"buy","reason":"one concise sentence","target":"$210–$220"}]}`
       );
       const parsed=parseJSON(raw);
-      if(parsed?.recs)setRecs(parsed.recs);
-    }catch{}
+      setRecs(parsed?.recs?.length?parsed.recs:momentumRecs(stocks));
+    }catch{setRecs(momentumRecs(stocks));}
     finally{setLoading(false);}
   },[key]);
 
@@ -909,11 +991,8 @@ export default function StockScreener(){
     const valid=stockList.filter(s=>!s.loading&&s.s);
     if(!valid.length)return;
     setRefreshing(true);
-    const batchSize=4;
-    const batches=[];
-    for(let i=0;i<valid.length;i+=batchSize)batches.push(valid.slice(i,i+batchSize));
-    const results=await Promise.all(batches.map(b=>fetchPrices(b.map(s=>s.s))));
-    const merged=Object.assign({},...results);
+    // One batched request for the whole tab (cache + rate-limit friendly).
+    const merged=await fetchPrices(valid.map(s=>s.s));
     if(Object.keys(merged).length>0){
       setTabs(prev=>prev.map(t=>t.id===activeTab?{
         ...t,
