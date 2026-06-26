@@ -18,9 +18,9 @@ const BASE_NAMES = {
 
 const INDICES = [
   {s:"SPY", name:"S&P 500",    p:730.21, pc:721.80},
-  {s:"QQQ", name:"Nasdaq 100", p:498.70, pc:492.10},
+  {s:"QQQM", name:"Nasdaq QQQ ETF", p:498.70, pc:492.10},
   {s:"DIA", name:"SPDR Dow Jones",  p:43215,  pc:42450 },
-  {s:"VIXY", name:"VIX Futures",        p:16.23,  pc:18.20 },
+  {s:"IWM", name:"Russell 2000",        p:16.23,  pc:18.20 },
 ];
 
 const DEFAULT_TABS = [
@@ -937,33 +937,47 @@ export default function StockScreener(){
     if(!sym||curTab.stocks.some(s=>s.s===sym)){setNewTicker("");return;}
     setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:[...t.stocks,{s:sym,p:0,pc:0,loading:true}]}:t));
     setNewTicker("");
+
+    // Commit a resolved price/prevClose for this ticker (and clear loading).
+    const commit=(price,prevClose)=>setTabs(p=>p.map(t=>t.id===activeTab?{...t,
+      stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose||price*0.99,loading:false}:s)}:t));
+    const markFailed=()=>setTabs(p=>p.map(t=>t.id===activeTab?{...t,
+      stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
+
+    let price=0,prevClose=0;
+    // 1) Real-time quote from the price provider (Twelve Data).
     try{
-      let price=0,prevClose=0,name=null;
-      // 1) Real-time quote from Finnhub (if a key is configured)
       const q=await fetchQuote(sym);
       if(q){price=q.p;prevClose=q.pc;}
-      // 2) Company name (and price fallback when no live quote) from the model
-      if(!price||!names[sym]){
+    }catch{}
+
+    // 2) If the provider had no quote, fall back to a model estimate (best effort).
+    if(!price){
+      try{
         const txt=await window.claude.complete(
           `For the stock ticker ${sym}, reply with ONLY this raw JSON (no markdown):\n{"name":"Full Company Name","price":123.45,"prevClose":121.00}`
         );
         const parsed=parseJSON(txt);
-        if(parsed?.name)name=parsed.name;
-        if(!price){
-          price=Number(parsed?.price||parsed?.p||0);
-          prevClose=Number(parsed?.prevClose||parsed?.pc||0);
-          if(!price){const fp=extractPrice(txt||"");if(fp)price=fp;}
-        }
-      }
-      if(price>0){
-        if(name)setNames(n=>({...n,[sym]:name}));
-        if(!prevClose)prevClose=price*0.99;
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose,loading:false}:s)}:t));
-      }else{
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
-      }
-    }catch{
-      setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
+        if(parsed?.name)setNames(n=>({...n,[sym]:parsed.name}));
+        price=Number(parsed?.price||parsed?.p||0);
+        prevClose=Number(parsed?.prevClose||parsed?.pc||0);
+        if(!price){const fp=extractPrice(txt||"");if(fp)price=fp;}
+      }catch{}
+    }
+
+    // Commit the price as soon as we have one — never let the name lookup undo it.
+    if(price>0)commit(price,prevClose);
+    else{markFailed();return;}
+
+    // 3) Company name lookup — fully isolated; a failure here cannot reset the price.
+    if(!names[sym]){
+      try{
+        const txt=await window.claude.complete(
+          `Reply with ONLY the full company name for the stock ticker ${sym}. No other text.`
+        );
+        const nm=(txt||"").trim().split("\n")[0].slice(0,60);
+        if(nm)setNames(n=>({...n,[sym]:nm}));
+      }catch{}
     }
   };
 
