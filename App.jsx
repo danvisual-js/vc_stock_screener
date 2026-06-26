@@ -575,18 +575,26 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols}){
       macro:KNOWN_EVENTS.macro.slice(0,4),
     };
     setEvents(filtered);
-    // Then try to get live market data + better events
+    let alive=true;
     (async()=>{
       try{
+        // 1) Real-time index quotes from the price provider (Twelve Data),
+        //    falling back to the hardcoded seed value per index on failure.
+        const liveIndices=await Promise.all(INDICES.map(async idx=>{
+          const q=await fetchQuote(idx.s);
+          return q?{...idx,p:q.p,pc:q.pc}:idx;
+        }));
+        // 2) Market news only, via the AI bridge (no prices — it can't quote live).
         const raw=await callClaude(
-          `Today June 22 2026: current prices for SPY, QQQ, DJI (Dow Jones), VIX and 3 top market news items with sentiment. JSON only.`,
-          `Return ONLY raw JSON no markdown: {"indices":[{"s":"SPY","name":"S&P 500","p":730.21,"pc":725.50}],"news":[{"h":"headline text","sentiment":"bullish|bearish|neutral"}]}`
+          `Give 3 top US stock-market news items for today with sentiment. JSON only.`,
+          `Return ONLY raw JSON no markdown: {"news":[{"h":"headline text","sentiment":"bullish|bearish|neutral"}]}`
         );
-        const parsed=parseJSON(raw);
-        if(parsed)setMkt(parsed);
+        const parsed=parseJSON(raw)||{};
+        if(alive)setMkt({indices:liveIndices,news:parsed.news||[]});
       }catch{}
-      finally{setBusy(false);}
+      finally{if(alive)setBusy(false);}
     })();
+    return()=>{alive=false;};
   },[symbols.join(",")]);
 
   const indices=mkt?.indices?.length?mkt.indices:INDICES;
