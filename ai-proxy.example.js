@@ -1,42 +1,56 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { Anthropic } = require('@anthropic-ai/sdk');
+// ai-proxy.example.js
+// ───────────────────────────────────────────────────────────────────
+// Minimal backend proxy so the screener's AI features (news /
+// recommendations / insights) work on a REAL deployment, where the
+// in-preview `window.claude.complete` bridge does not exist.
+//
+// The browser must never hold your Anthropic API key — this server does.
+// Deploy this as a serverless function and point AI_PROXY_URL (top of
+// stock_screener2.jsx) at its path, e.g. "/api/claude".
+//
+// Contract: accepts  POST { prompt: string }
+//           returns  { text: string }
+//
+// Works as-is on Vercel (/api/claude.js) or Netlify (adapt the handler
+// signature). Set ANTHROPIC_API_KEY in your hosting env vars.
+// ───────────────────────────────────────────────────────────────────
 
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.use(cors());
-app.use(express.json());
-
-// Initialize Anthropic Client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-app.post('/api/ai-proxy', async (req, res) => {
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "POST only" });
+    return;
+  }
   try {
-    const { prompt } = req.body;
-
+    const { prompt } = req.body || {};
     if (!prompt) {
-      return res.status(400).json({ error: 'Prompt is required' });
+      res.status(400).json({ error: "missing prompt" });
+      return;
     }
 
-    // Call Claude
-    const msg = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-latest',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+        // Optional: give the model live data by enabling web search.
+        // tools: [{ type: "web_search_20250305", name: "web_search" }],
+      }),
     });
 
-    // Return the response text
-    res.json({ result: msg.content[0].text });
-  } catch (error) {
-    console.error('Claude Proxy Error:', error);
-    res.status(500).json({ error: 'Failed to fetch response from Claude' });
-  }
-});
+    const data = await r.json();
+    const text = (data.content || [])
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("");
 
-app.listen(port, () => {
-  console.log(`Claude Proxy running at http://localhost:${port}`);
-});
+    res.status(200).json({ text });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+}
