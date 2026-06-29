@@ -146,16 +146,12 @@ function findSR(data,lb=10){
   }
   return z.reduce((a,x)=>(!a.some(y=>Math.abs(y.price-x.price)/x.price<0.015)&&a.push(x),a),[]).slice(0,5);
 }
-// In this sandbox the only available model bridge is window.claude.complete
-// (claude-haiku-4-5, no web-search tool). Direct calls to api.anthropic.com
-// from the browser fail (no API key + CORS) — that is why the old code never
-// returned anything. Note: without web search the model CANNOT quote live
-// prices, so this is used only for the text features (news/recs/insights).
 async function callClaude(userMsg,system){
-  const prompt=system?`${system}\n\n${userMsg}`:userMsg;
-  try{
-    return (await window.claude.complete(prompt))||"";
-  }catch{return "";}
+  const body={model:"claude-sonnet-4-6",max_tokens:1000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:userMsg}]};
+  if(system)body.system=system;
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const data=await res.json();
+  return data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
 }
 function parseJSON(raw){
   if(!raw)return null;
@@ -177,48 +173,29 @@ function extractPrice(text){
   return null;
 }
 
-// ── PRICE DATA SOURCE ──────────────────────────────────────────────
-// Real-time quotes AND historical candles come from Twelve Data (free tier
-// covers both, browser-CORS friendly). Get a free key at
-// https://twelvedata.com/pricing and paste it below.
-// Free tier limits: ~8 requests/min, 800/day.
-// Without a key the app falls back to (stale) model estimates + synthetic charts.
-const STOCK_API_KEY="26b196ead39846439e6fe3ca03485ddf";  // ← paste your Twelve Data API key here for LIVE data
-
-// Real-time quote for one symbol via Twelve Data: {p:current, pc:prevClose}
-async function fetchQuote(symbol){
-  if(!STOCK_API_KEY)return null;
-  try{
-    const r=await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${STOCK_API_KEY}`);
-    const d=await r.json();
-    const p=parseFloat(d&&d.close);
-    if(p>0){
-      const pc=parseFloat(d.previous_close);
-      return{p,pc:pc>0?pc:p};
-    }
-  }catch{}
-  return null;
-}
-
-// Best-effort estimate from the model (NOT real-time) — fallback only.
-async function fetchEstimate(symbols){
-  const eg=JSON.stringify(Object.fromEntries(symbols.slice(0,2).map(s=>[s,{p:298.14,pc:295.95}])));
-  const prompt=`Give your most recent known stock prices for: ${symbols.join(", ")}.
-Reply with ONLY this raw JSON (no markdown, no commentary):
-${eg}
-Replace the example values with your best estimate for all ${symbols.length} tickers.`;
-  try{return parseJSON(await window.claude.complete(prompt))||{};}catch{return{};}
-}
-
-// Fetch prices for a batch of symbols. Uses Finnhub when a key is configured,
-// otherwise falls back to model estimates so the UI still populates.
+// Fetch prices for a batch of symbols — no system prompt, explicit user instructions
 async function fetchPrices(symbols){
-  if(STOCK_API_KEY){
-    const out={};
-    await Promise.all(symbols.map(async s=>{const q=await fetchQuote(s);if(q)out[s]=q;}));
-    if(Object.keys(out).length)return out;
-  }
-  return fetchEstimate(symbols);
+  const eg=JSON.stringify(Object.fromEntries(symbols.slice(0,2).map(s=>[s,{p:298.14,pc:295.95}])));
+  try{
+    const res=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-6",
+        max_tokens:1000,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:`Use web search to look up the current real-time stock prices for: ${symbols.join(", ")}.
+
+After searching, reply with ONLY this JSON — no explanation, no markdown fences, just the raw object:
+${eg}
+
+Replace example values with the actual prices you find for all ${symbols.length} tickers.`}]
+      })
+    });
+    const d=await res.json();
+    const txt=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+    return parseJSON(txt)||{};
+  }catch{return{};}
 }
 
 // Sorted date helper for events
@@ -288,49 +265,6 @@ const TIMEFRAMES={
 function getChartData(price,chPct,tf){
   const {barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];
   return enrich(genBars(price,chPct,barMin,n));
-}
-
-// ── REAL HISTORICAL CANDLES (Twelve Data) ──
-// Maps the app's timeframes to Twelve Data's /time_series intervals and
-// returns OHLCV bars in the same shape genBars() produces, so the charts
-// render unchanged. Returns null on any failure → caller keeps synthetic.
-async function fetchCandles(symbol,tf){
-  if(!STOCK_API_KEY)return null;
-  const cfg=TIMEFRAMES[tf]||TIMEFRAMES["5m"];
-  const intervalMap={1:"1min",5:"5min",15:"15min",60:"1h",1440:"1day"};
-  const interval=intervalMap[cfg.barMin]||"1day";
-  try{
-    const r=await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${cfg.n}&order=ASC&apikey=${STOCK_API_KEY}`);
-    const d=await r.json();
-    if(d&&d.status==="ok"&&Array.isArray(d.values)&&d.values.length){
-      const intraday=cfg.barMin<1440;
-      return d.values.map(v=>{
-        const dt=new Date(v.datetime.replace(" ","T"));
-        const label=intraday
-          ?`${dt.getHours()}:${String(dt.getMinutes()).padStart(2,"0")}`
-          :dt.toLocaleDateString("en-US",{month:"short",day:"numeric"});
-        const open=+v.open,close=+v.close;
-        return{date:label,open,close,high:+v.high,low:+v.low,volume:+(v.volume||0),isGreen:close>=open};
-      });
-    }
-  }catch{}
-  return null;
-}
-
-// Hook: render synthetic bars immediately, then swap in real candles once
-// they arrive (or keep synthetic if the fetch yields nothing).
-function useChartData(symbol,price,chPct,tf){
-  const fallback=useMemo(()=>getChartData(price,chPct,tf),[symbol,price,tf]);
-  const [data,setData]=useState(fallback);
-  useEffect(()=>{
-    let alive=true;
-    setData(fallback);
-    fetchCandles(symbol,tf).then(real=>{
-      if(alive&&real&&real.length)setData(enrich(real));
-    });
-    return()=>{alive=false;};
-  },[symbol,tf,fallback]);
-  return data;
 }
 
 
@@ -531,7 +465,7 @@ function IndexChart({index,T}){
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
   const raw=useMemo(()=>genHistory(index.p,pct(index.p,index.pc),365),[index.s]);
   const full=useMemo(()=>enrich(raw),[raw]);
-  const data=useChartData(index.s,index.p,pct(index.p,index.pc),tf);
+  const data=useMemo(()=>getChartData(index.p,pct(index.p,index.pc),tf),[index.s,index.p,tf]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(data):[],[data,tf]);
   const ch=pct(index.p,index.pc),isUp=ch>=0;
   const col=isUp?T.up:T.down;
@@ -575,26 +509,18 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols}){
       macro:KNOWN_EVENTS.macro.slice(0,4),
     };
     setEvents(filtered);
-    let alive=true;
+    // Then try to get live market data + better events
     (async()=>{
       try{
-        // 1) Real-time index quotes from the price provider (Twelve Data),
-        //    falling back to the hardcoded seed value per index on failure.
-        const liveIndices=await Promise.all(INDICES.map(async idx=>{
-          const q=await fetchQuote(idx.s);
-          return q?{...idx,p:q.p,pc:q.pc}:idx;
-        }));
-        // 2) Market news only, via the AI bridge (no prices — it can't quote live).
         const raw=await callClaude(
-          `Give 3 top US stock-market news items for today with sentiment. JSON only.`,
-          `Return ONLY raw JSON no markdown: {"news":[{"h":"headline text","sentiment":"bullish|bearish|neutral"}]}`
+          `Today June 22 2026: current prices for SPY, QQQ, DJI (Dow Jones), VIX and 3 top market news items with sentiment. JSON only.`,
+          `Return ONLY raw JSON no markdown: {"indices":[{"s":"SPY","name":"S&P 500","p":730.21,"pc":725.50}],"news":[{"h":"headline text","sentiment":"bullish|bearish|neutral"}]}`
         );
-        const parsed=parseJSON(raw)||{};
-        if(alive)setMkt({indices:liveIndices,news:parsed.news||[]});
+        const parsed=parseJSON(raw);
+        if(parsed)setMkt(parsed);
       }catch{}
-      finally{if(alive)setBusy(false);}
+      finally{setBusy(false);}
     })();
-    return()=>{alive=false;};
   },[symbols.join(",")]);
 
   const indices=mkt?.indices?.length?mkt.indices:INDICES;
@@ -736,7 +662,7 @@ function StockDetail({selected,names,T,onClose}){
   const [insight,setInsight]=useState("");
   const [loadingAI,setLoadingAI]=useState(false);
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
-  const chartData=useChartData(selected.s,selected.p,pct(selected.p,selected.pc),tf);
+  const chartData=useMemo(()=>getChartData(selected.p,pct(selected.p,selected.pc),tf),[selected.s,selected.p,tf]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(chartData):[],[chartData,tf]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
   const getInsight=async()=>{
@@ -938,25 +864,30 @@ export default function StockScreener(){
     setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:[...t.stocks,{s:sym,p:0,pc:0,loading:true}]}:t));
     setNewTicker("");
     try{
-      let price=0,prevClose=0,name=null;
-      // 1) Real-time quote from Finnhub (if a key is configured)
-      const q=await fetchQuote(sym);
-      if(q){price=q.p;prevClose=q.pc;}
-      // 2) Company name (and price fallback when no live quote) from the model
-      if(!price||!names[sym]){
-        const txt=await window.claude.complete(
-          `For the stock ticker ${sym}, reply with ONLY this raw JSON (no markdown):\n{"name":"Full Company Name","price":123.45,"prevClose":121.00}`
-        );
-        const parsed=parseJSON(txt);
-        if(parsed?.name)name=parsed.name;
-        if(!price){
-          price=Number(parsed?.price||parsed?.p||0);
-          prevClose=Number(parsed?.prevClose||parsed?.pc||0);
-          if(!price){const fp=extractPrice(txt||"");if(fp)price=fp;}
-        }
-      }
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6",
+          max_tokens:500,
+          tools:[{type:"web_search_20250305",name:"web_search"}],
+          messages:[{role:"user",content:`Search the web for the current real-time stock price of ${sym}.
+
+Reply with ONLY this JSON and nothing else:
+{"symbol":"${sym}","name":"Full Company Name","price":123.45,"prevClose":121.00}
+
+Use the actual current price from your search results.`}]
+        })
+      });
+      const data=await res.json();
+      const txt=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+      const parsed=parseJSON(txt);
+      let price=Number(parsed?.price||parsed?.p||0);
+      let prevClose=Number(parsed?.prevClose||parsed?.pc||0);
+      // Regex fallback if JSON parsing missed the price
+      if(!price){const fp=extractPrice(txt);if(fp)price=fp;}
       if(price>0){
-        if(name)setNames(n=>({...n,[sym]:name}));
+        if(parsed?.name)setNames(n=>({...n,[sym]:parsed.name}));
         if(!prevClose)prevClose=price*0.99;
         setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose,loading:false}:s)}:t));
       }else{
@@ -1103,7 +1034,7 @@ export default function StockScreener(){
       <Recommendations stocks={stocks} T={T}/>
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
-        AI insights via Claude · Quotes &amp; candles via Twelve Data (synthetic fallback) · Not financial advice
+        AI insights via Claude + web search · Chart data is synthetic/illustrative · Not financial advice
       </div>
     </div>
   );
