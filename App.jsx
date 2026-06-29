@@ -496,35 +496,18 @@ function IndexChart({index,T}){
 /* ════════════════════════════════════════════════════
    MARKET HERO — indices + news accordion + events
 ════════════════════════════════════════════════════ */
-function MarketHero({T,selectedIdx,onSelectIdx,symbols}){
-  const [mkt,setMkt]=useState(null);
+function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing}){
   const [events,setEvents]=useState(null);
   const [newsOpen,setNewsOpen]=useState(false);
-  const [busy,setBusy]=useState(true);
 
   useEffect(()=>{
-    // Filter known events to current symbols
     const filtered={
       earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,6),
       macro:KNOWN_EVENTS.macro.slice(0,4),
     };
     setEvents(filtered);
-    // Then try to get live market data + better events
-    (async()=>{
-      try{
-        const raw=await callClaude(
-          `Today June 22 2026: current prices for SPY, QQQ, DJI (Dow Jones), VIX and 3 top market news items with sentiment. JSON only.`,
-          `Return ONLY raw JSON no markdown: {"indices":[{"s":"SPY","name":"S&P 500","p":730.21,"pc":725.50}],"news":[{"h":"headline text","sentiment":"bullish|bearish|neutral"}]}`
-        );
-        const parsed=parseJSON(raw);
-        if(parsed)setMkt(parsed);
-      }catch{}
-      finally{setBusy(false);}
-    })();
   },[symbols.join(",")]);
 
-  const indices=mkt?.indices?.length?mkt.indices:INDICES;
-  const news=mkt?.news||[];
   const sentC=s=>s==="bullish"?T.up:s==="bearish"?T.down:T.textSub;
   const sentI=s=>s==="bullish"?"↑":s==="bearish"?"↓":"→";
   const impC=i=>i==="high"?T.down:i==="med"?T.ema9:T.textSub;
@@ -557,7 +540,7 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols}){
         {/* Trending News accordion */}
         <div style={{background:T.surface,borderRadius:12,padding:"14px 16px",border:`1px solid ${T.border}`,boxShadow:T.shadow}}>
           <div style={{fontSize:10,fontWeight:700,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10,fontFamily:T.sans}}>Trending</div>
-          {busy&&<div style={{fontSize:12,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</div>}
+          {refreshing&&!news.length&&<div style={{fontSize:12,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</div>}
           {news.length>0&&<>
             {(newsOpen?news:news.slice(0,2)).map((n,i)=>(
               <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:10,paddingBottom:i<(newsOpen?news:news.slice(0,2)).length-1?10:0,borderBottom:i<(newsOpen?news:news.slice(0,2)).length-1?`1px solid ${T.border}`:"none"}}>
@@ -571,7 +554,7 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols}){
               </button>
             )}
           </>}
-          {!busy&&!news.length&&<div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>Tap an index tile to see its chart.</div>}
+          {!refreshing&&!news.length&&<div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>Tap an index tile to see its chart.</div>}
         </div>
 
         {/* Events */}
@@ -788,6 +771,8 @@ export default function StockScreener(){
   const [names,setNames]=useState({...BASE_NAMES});
   const [tabs,setTabs]=useState(DEFAULT_TABS);
   const [activeTab,setActiveTab]=useState("tech");
+  const [indices,setIndices]=useState(INDICES);
+  const [mktNews,setMktNews]=useState([]);
   const [selectedIdx,setSelectedIdx]=useState(null);
   const [selected,setSelected]=useState(null);
   const [viewMode,setViewMode]=useState("grid");
@@ -808,7 +793,7 @@ export default function StockScreener(){
 
   useEffect(()=>{
     if(autoRef.current)clearInterval(autoRef.current);
-    if(autoRefresh){autoRef.current=setInterval(()=>refreshPrices(),60000);}
+    if(autoRefresh){autoRef.current=setInterval(()=>runRefresh(curTab.stocks),60000);}
     return()=>{ if(autoRef.current)clearInterval(autoRef.current); };
   },[autoRefresh,activeTab]);
 
@@ -832,15 +817,42 @@ export default function StockScreener(){
 
   // Core refresh — accepts any stock list so it works on mount and tab switch
   const runRefresh=useCallback(async(stockList)=>{
-    const valid=stockList.filter(s=>!s.loading&&s.s);
-    if(!valid.length)return;
+    const valid=(stockList||[]).filter(s=>!s.loading&&s.s);
     setRefreshing(true);
+
+    // Combine stock symbols + index symbols into one pool of batches
+    const idxSyms=INDICES.map(i=>i.s);
+    const allSyms=[...new Set([...valid.map(s=>s.s),...idxSyms])];
     const batchSize=4;
     const batches=[];
-    for(let i=0;i<valid.length;i+=batchSize)batches.push(valid.slice(i,i+batchSize));
-    const results=await Promise.all(batches.map(b=>fetchPrices(b.map(s=>s.s))));
-    const merged=Object.assign({},...results);
-    if(Object.keys(merged).length>0){
+    for(let i=0;i<allSyms.length;i+=batchSize)batches.push(allSyms.slice(i,i+batchSize));
+
+    // Fire all price batches + news fetch in parallel
+    const [batchResults,newsRaw]=await Promise.all([
+      Promise.all(batches.map(b=>fetchPrices(b))),
+      callClaude(
+        "Today: 3 top stock market news items with sentiment. JSON only.",
+        `Return ONLY raw JSON: {"news":[{"h":"headline","sentiment":"bullish|bearish|neutral"}]}`
+      ).catch(()=>"")
+    ]);
+
+    const merged=Object.assign({},...batchResults);
+
+    // Update news
+    const parsedNews=parseJSON(newsRaw);
+    if(parsedNews?.news?.length)setMktNews(parsedNews.news);
+
+    // Update index prices
+    setIndices(prev=>prev.map(idx=>{
+      const u=merged[idx.s];
+      if(!u)return idx;
+      const p=Number(u.p||u.price||0);
+      const pc=Number(u.pc||u.prevClose||p*0.99);
+      return p>0?{...idx,p,pc}:idx;
+    }));
+
+    // Update stock prices
+    if(valid.length>0){
       setTabs(prev=>prev.map(t=>t.id===activeTab?{
         ...t,
         stocks:t.stocks.map(s=>{
@@ -851,12 +863,20 @@ export default function StockScreener(){
           return p>0?{...s,p,pc}:s;
         })
       }:t));
-      setLastRefresh(new Date());
     }
+
+    setLastRefresh(new Date());
     setRefreshing(false);
   },[activeTab]);
 
-  const refreshPrices=useCallback(()=>runRefresh(curTab.stocks),[runRefresh,curTab.stocks]);
+  // Keep selected index chart in sync when prices refresh
+  useEffect(()=>{
+    if(!selectedIdx)return;
+    const updated=indices.find(i=>i.s===selectedIdx.s);
+    if(updated&&(updated.p!==selectedIdx.p||updated.pc!==selectedIdx.pc)){
+      setSelectedIdx(updated);
+    }
+  },[indices]);
 
   const addTicker=async()=>{
     const sym=newTicker.trim().toUpperCase();
@@ -952,7 +972,7 @@ Use the actual current price from your search results.`}]
           <button onClick={()=>setAutoRefresh(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${autoRefresh?T.up:T.border}`,background:autoRefresh?T.upBg:"transparent",color:autoRefresh?T.up:T.textSub,fontSize:11,cursor:"pointer",fontWeight:autoRefresh?600:400}}>
             {autoRefresh?"⏱ Auto ON":"⏱ Auto"}
           </button>
-          <button onClick={refreshPrices} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
+          <button onClick={()=>runRefresh(curTab.stocks)} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
             <span style={refreshing?{animation:"pulse 1s infinite",display:"inline-block"}:{}}>{refreshing?"↻ Refreshing…":"↻ Refresh"}</span>
           </button>
           <button onClick={()=>setIsDark(v=>!v)} style={{padding:"5px 11px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:12,cursor:"pointer",boxShadow:T.shadow}}>
@@ -962,7 +982,7 @@ Use the actual current price from your search results.`}]
       </div>
 
       {/* ── MARKET HERO ─────────────────────────── */}
-      <MarketHero T={T} selectedIdx={selectedIdx} onSelectIdx={setSelectedIdx} symbols={allSymbols}/>
+      <MarketHero T={T} selectedIdx={selectedIdx} onSelectIdx={setSelectedIdx} symbols={allSymbols} indices={indices} news={mktNews} refreshing={refreshing}/>
       {selectedIdx&&<IndexChart key={selectedIdx.s} index={selectedIdx} T={T}/>}
 
       {/* ── TABS (underline style) ─────────────── */}
