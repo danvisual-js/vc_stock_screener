@@ -1342,7 +1342,7 @@ export default function StockScreener(){
 
   useEffect(()=>{
     if(autoRef.current)clearInterval(autoRef.current);
-    if(autoRefresh){autoRef.current=setInterval(()=>runRefresh(curTab.stocks),60000);}
+    if(autoRefresh){autoRef.current=setInterval(()=>runRefresh(curTab.stocks),15000);}
     return()=>{ if(autoRef.current)clearInterval(autoRef.current); };
   },[autoRefresh,activeTab]);
 
