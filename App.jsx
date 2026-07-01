@@ -394,7 +394,9 @@ function getChartData(price,chPct,tf){
    CHANGE BADGE
 ════════════════════════════════════════════════════ */
 function ChangeBadge({p,pc,T,size="sm"}){
-  const ch=pct(p||0,pc||1),isUp=ch>=0;
+  const ch=(!p||!pc||pc<=0)?null:pct(p,pc);
+  if(ch===null||!isFinite(ch)||isNaN(ch))return null;
+  const isUp=ch>=0;
   const fs=size==="lg"?14:size==="md"?12:11;
   return(
     <span style={{display:"inline-flex",alignItems:"center",gap:2,padding:"2px 7px",borderRadius:6,background:isUp?T.upBg:T.downBg,color:isUp?T.up:T.down,fontSize:fs,fontWeight:600,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
@@ -403,9 +405,25 @@ function ChangeBadge({p,pc,T,size="sm"}){
   );
 }
 
-/* ════════════════════════════════════════════════════
-   SPARKLINE — mini daily chart for cards
-════════════════════════════════════════════════════ */
+function DailyChange({p,pc,T,size="sm"}){
+  if(!p||!pc||pc<=0||!isFinite(p/pc))return null;
+  const ch=pct(p,pc);
+  if(!isFinite(ch)||isNaN(ch))return null;
+  const isUp=ch>=0, diff=p-pc;
+  const fs=size==="lg"?13:size==="md"?11:10;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+      <span style={{display:"inline-flex",alignItems:"center",gap:2,padding:"2px 7px",borderRadius:6,background:isUp?T.upBg:T.downBg,color:isUp?T.up:T.down,fontSize:fs,fontWeight:600,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
+        {isUp?"▲":"▼"} {Math.abs(ch).toFixed(2)}%
+      </span>
+      <span style={{fontSize:fs-1,color:isUp?T.up:T.down,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap",fontWeight:500}}>
+        {isUp?"+":""}{diff.toFixed(2)}
+      </span>
+    </div>
+  );
+}
+
+
 function Sparkline({price,changePct,T,w=80,h=28}){
   const isUp=changePct>=0;
   const pts=useMemo(()=>genSparkline(price,changePct),[price,changePct]);
@@ -610,7 +628,7 @@ function IndexChart({index,T}){
           <div style={{fontSize:11,color:T.textSub,fontWeight:500,marginBottom:4,fontFamily:T.sans}}>{index.name} · {index.s}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:10}}>
             <span style={{fontSize:26,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{fN(index.p)}</span>
-            <ChangeBadge p={index.p} pc={index.pc} T={T} size="md"/>
+            <DailyChange p={index.p} pc={index.pc} T={T} size="md"/>
           </div>
         </div>
       </div>
@@ -662,7 +680,7 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing})
             }}>
               <div style={{fontSize:9,color:T.textSub,fontWeight:500,marginBottom:4,fontFamily:T.sans,textTransform:"uppercase",letterSpacing:"0.04em"}}>{idx.name}</div>
               <div style={{fontSize:15,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums",marginBottom:4}}>{fN(idx.p)}</div>
-              <ChangeBadge p={idx.p} pc={idx.pc} T={T} size="sm"/>
+              <DailyChange p={idx.p} pc={idx.pc} T={T} size="sm"/>
             </div>
           );
         })}
@@ -744,7 +762,7 @@ function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing}
         </div>
       )}
       <div style={{marginTop:4}}>
-        {!ld&&!refreshing&&<ChangeBadge p={p} pc={pc} T={T}/>}
+        {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
       </div>
       {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{position:"absolute",top:8,right:8,width:18,height:18,borderRadius:9,border:"none",background:T.border,color:T.textSub,fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
     </div>
@@ -763,7 +781,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing})
       <div style={{textAlign:"right",minWidth:60}}>
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
       </div>
-      {!ld&&!refreshing&&<ChangeBadge p={p} pc={pc} T={T}/>}
+      {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
       {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}>✕</button>}
     </div>
   );
@@ -813,7 +831,7 @@ function StockDetail({selected,names,T,onClose}){
             <div style={{fontFamily:T.sans,fontSize:11,color:T.textSub,fontWeight:500,marginBottom:4}}>{names[selected.s]||selected.s}</div>
             <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
               <span style={{fontFamily:T.sans,fontSize:26,fontWeight:700,color:T.text,fontVariantNumeric:"tabular-nums"}}>{selected.p<1?`$${selected.p.toFixed(4)}`:`$${f2(selected.p)}`}</span>
-              <ChangeBadge p={selected.p} pc={selected.pc} T={T} size="lg"/>
+              <DailyChange p={selected.p} pc={selected.pc} T={T} size="lg"/>
             </div>
           </div>
           <button onClick={onClose} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.textSub,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>✕</button>
@@ -916,8 +934,161 @@ function Recommendations({stocks,T}){
 }
 
 /* ════════════════════════════════════════════════════
-   MAIN
+   TICKER SUGGESTIONS & SEARCH DROPDOWN
 ════════════════════════════════════════════════════ */
+const SUGGESTIONS=[
+  // Mega-cap Tech
+  {s:"AAPL",n:"Apple"},{s:"MSFT",n:"Microsoft"},{s:"NVDA",n:"NVIDIA"},
+  {s:"GOOGL",n:"Alphabet"},{s:"AMZN",n:"Amazon"},{s:"META",n:"Meta"},
+  {s:"TSLA",n:"Tesla"},{s:"AVGO",n:"Broadcom"},{s:"ORCL",n:"Oracle"},
+  // Semiconductors
+  {s:"AMD",n:"Advanced Micro Devices"},{s:"INTC",n:"Intel"},{s:"QCOM",n:"Qualcomm"},
+  {s:"MRVL",n:"Marvell Technology"},{s:"SMCI",n:"Super Micro Computer"},
+  {s:"ON",n:"ON Semiconductor"},{s:"AMAT",n:"Applied Materials"},
+  {s:"LRCX",n:"Lam Research"},{s:"KLAC",n:"KLA Corporation"},
+  {s:"MU",n:"Micron Technology"},{s:"TER",n:"Teradyne"},
+  {s:"MCHP",n:"Microchip Technology"},{s:"MPWR",n:"Monolithic Power"},
+  // Software / Cloud
+  {s:"NOW",n:"ServiceNow"},{s:"CRM",n:"Salesforce"},
+  {s:"ADBE",n:"Adobe"},{s:"INTU",n:"Intuit"},{s:"SNOW",n:"Snowflake"},
+  {s:"DDOG",n:"Datadog"},{s:"TEAM",n:"Atlassian"},{s:"WDAY",n:"Workday"},
+  {s:"ZM",n:"Zoom Video"},{s:"MSCI",n:"MSCI Inc"},
+  // Cybersecurity
+  {s:"CRWD",n:"CrowdStrike"},{s:"PANW",n:"Palo Alto Networks"},
+  {s:"ZS",n:"Zscaler"},{s:"FTNT",n:"Fortinet"},
+  {s:"S",n:"SentinelOne"},{s:"OKTA",n:"Okta"},
+  // AI / Emerging Tech
+  {s:"AI",n:"C3.ai"},{s:"PLTR",n:"Palantir"},{s:"IONQ",n:"IonQ"},
+  {s:"SOUN",n:"SoundHound AI"},{s:"BBAI",n:"BigBear.ai"},
+  {s:"TEM",n:"Tempus AI"},{s:"RBRK",n:"Rubrik"},
+  // Internet / Consumer Tech
+  {s:"NFLX",n:"Netflix"},{s:"UBER",n:"Uber"},{s:"LYFT",n:"Lyft"},
+  {s:"ABNB",n:"Airbnb"},{s:"BKNG",n:"Booking Holdings"},
+  {s:"EXPE",n:"Expedia"},{s:"DASH",n:"DoorDash"},{s:"SNAP",n:"Snap"},
+  {s:"PINS",n:"Pinterest"},{s:"RDDT",n:"Reddit"},
+  {s:"SPOT",n:"Spotify"},{s:"RBLX",n:"Roblox"},
+  // Telecom / Media
+  {s:"DIS",n:"Disney"},{s:"CMCSA",n:"Comcast"},
+  {s:"T",n:"AT&T"},{s:"VZ",n:"Verizon"},
+  // Finance
+  {s:"JPM",n:"JPMorgan Chase"},{s:"BAC",n:"Bank of America"},
+  {s:"GS",n:"Goldman Sachs"},{s:"MS",n:"Morgan Stanley"},
+  {s:"WFC",n:"Wells Fargo"},{s:"C",n:"Citigroup"},
+  {s:"BLK",n:"BlackRock"},{s:"SCHW",n:"Charles Schwab"},
+  {s:"V",n:"Visa"},{s:"MA",n:"Mastercard"},
+  {s:"PYPL",n:"PayPal"},{s:"SQ",n:"Block Inc"},
+  {s:"COIN",n:"Coinbase"},{s:"AXP",n:"American Express"},
+  {s:"HOOD",n:"Robinhood Markets"},
+  // Healthcare
+  {s:"UNH",n:"UnitedHealth"},{s:"JNJ",n:"Johnson & Johnson"},
+  {s:"LLY",n:"Eli Lilly"},{s:"ABBV",n:"AbbVie"},
+  {s:"MRK",n:"Merck"},{s:"PFE",n:"Pfizer"},
+  {s:"TMO",n:"Thermo Fisher"},{s:"ABT",n:"Abbott"},
+  {s:"ISRG",n:"Intuitive Surgical"},{s:"AMGN",n:"Amgen"},
+  // Energy
+  {s:"XOM",n:"ExxonMobil"},{s:"CVX",n:"Chevron"},
+  {s:"COP",n:"ConocoPhillips"},{s:"VST",n:"Vistra Corp"},
+  {s:"CEG",n:"Constellation Energy"},{s:"NEE",n:"NextEra Energy"},
+  {s:"SLB",n:"Schlumberger"},
+  // Consumer
+  {s:"WMT",n:"Walmart"},{s:"COST",n:"Costco"},
+  {s:"HD",n:"Home Depot"},{s:"TGT",n:"Target"},
+  {s:"MCD",n:"McDonald's"},{s:"SBUX",n:"Starbucks"},
+  {s:"NKE",n:"Nike"},{s:"PG",n:"Procter & Gamble"},
+  {s:"KO",n:"Coca-Cola"},{s:"PEP",n:"PepsiCo"},
+  // Industrial / Defense
+  {s:"CAT",n:"Caterpillar"},{s:"DE",n:"Deere & Co"},
+  {s:"HON",n:"Honeywell"},{s:"GE",n:"GE Aerospace"},
+  {s:"RTX",n:"Raytheon"},{s:"LMT",n:"Lockheed Martin"},
+  {s:"BA",n:"Boeing"},{s:"NOC",n:"Northrop Grumman"},
+  {s:"LHX",n:"L3Harris Technologies"},
+  // EV / Auto
+  {s:"GM",n:"General Motors"},{s:"F",n:"Ford Motor"},
+  {s:"RIVN",n:"Rivian"},{s:"LCID",n:"Lucid Motors"},
+  // ETFs & Indices
+  {s:"SPY",n:"S&P 500 ETF (SPDR)"},{s:"QQQ",n:"Nasdaq-100 ETF"},
+  {s:"IWM",n:"Russell 2000 ETF"},{s:"DIA",n:"Dow Jones ETF"},
+  {s:"VOO",n:"Vanguard S&P 500"},{s:"VTI",n:"Vanguard Total Market"},
+  {s:"GLD",n:"Gold ETF (SPDR)"},{s:"TLT",n:"20-Year Treasury ETF"},
+  {s:"ARKK",n:"ARK Innovation ETF"},{s:"BOTZ",n:"Robotics & AI ETF"},
+  {s:"SOXL",n:"Semis Bull 3x ETF"},{s:"TQQQ",n:"Nasdaq 3x Bull ETF"},
+  // Crypto-adjacent
+  {s:"MSTR",n:"MicroStrategy"},{s:"MARA",n:"Marathon Digital"},
+  {s:"CLSK",n:"CleanSpark"},{s:"RIOT",n:"Riot Platforms"},
+  // Other popular
+  {s:"NOK",n:"Nokia"},{s:"SPCX",n:"SpaceX"},
+  {s:"BRK.B",n:"Berkshire Hathaway B"},{s:"SHOP",n:"Shopify"},
+  {s:"MELI",n:"MercadoLibre"},{s:"SE",n:"Sea Limited"},
+  {s:"BABA",n:"Alibaba"},{s:"NIO",n:"NIO Inc"},
+  {s:"SOFI",n:"SoFi Technologies"},{s:"DRAM",n:"Memory ETF"},
+];
+
+function TickerSearch({value,onChange,onSelect,onKeyDown,T}){
+  const [open,setOpen]=useState(false);
+  const [hi,setHi]=useState(0);
+  const q=value.toUpperCase().trim();
+  const matches=useMemo(()=>{
+    if(!q)return[];
+    return SUGGESTIONS
+      .filter(t=>t.s.startsWith(q)||t.n.toUpperCase().includes(q))
+      .slice(0,8);
+  },[q]);
+
+  const pick=useCallback(sym=>{
+    onSelect(sym);
+    setOpen(false);setHi(0);
+  },[onSelect]);
+
+  const handleKey=e=>{
+    if(!open||!matches.length){onKeyDown&&onKeyDown(e);return;}
+    if(e.key==="ArrowDown"){e.preventDefault();setHi(h=>Math.min(h+1,matches.length-1));}
+    else if(e.key==="ArrowUp"){e.preventDefault();setHi(h=>Math.max(h-1,0));}
+    else if(e.key==="Enter"){e.preventDefault();pick(matches[hi]?.s||value);}
+    else if(e.key==="Escape"){setOpen(false);}
+    else{onKeyDown&&onKeyDown(e);}
+  };
+
+  return(
+    <div style={{position:"relative"}}>
+      <input
+        value={value}
+        onChange={e=>{onChange(e.target.value.toUpperCase());setOpen(true);setHi(0);}}
+        onFocus={()=>setOpen(true)}
+        onBlur={()=>setTimeout(()=>setOpen(false),160)}
+        onKeyDown={handleKey}
+        placeholder="Add ticker…"
+        style={{
+          padding:"6px 10px",borderRadius:8,width:110,outline:"none",
+          border:`1px solid ${T.border}`,background:T.surface,
+          color:T.text,fontSize:12,fontFamily:T.mono,boxShadow:T.shadow
+        }}
+      />
+      {open&&matches.length>0&&(
+        <div style={{
+          position:"absolute",top:"calc(100% + 4px)",left:0,minWidth:220,
+          background:T.surface,border:`1px solid ${T.border}`,
+          borderRadius:10,boxShadow:`0 8px 24px rgba(0,0,0,0.18)`,
+          zIndex:200,overflow:"hidden"
+        }}>
+          {matches.map((t,i)=>(
+            <div key={t.s} onMouseDown={()=>pick(t.s)} style={{
+              display:"flex",gap:10,alignItems:"center",
+              padding:"8px 12px",cursor:"pointer",
+              background:i===hi?T.accentBg:"transparent",
+              borderBottom:i<matches.length-1?`1px solid ${T.border}`:"none",
+              transition:"background 0.1s"
+            }}>
+              <span style={{fontFamily:T.mono,fontSize:12,fontWeight:700,color:T.text,minWidth:48}}>{t.s}</span>
+              <span style={{fontSize:11,color:T.textSub,fontFamily:T.sans,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.n}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export default function StockScreener(){
   const [isDark,setIsDark]=useState(true);
   const T=isDark?DARK:LIGHT;
@@ -1037,20 +1208,28 @@ export default function StockScreener(){
     }
   },[indices]);
 
-  const addTicker=async()=>{
-    const sym=newTicker.trim().toUpperCase();
-    if(!sym||curTab.stocks.some(s=>s.s===sym)){setNewTicker("");return;}
-    setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:[...t.stocks,{s:sym,p:0,pc:0,loading:true}]}:t));
-    setNewTicker("");
-    // Try Yahoo Finance first (fast + accurate)
+  const addTickerBySymbol=useCallback(async(sym)=>{
+    sym=sym.trim().toUpperCase();
+    if(!sym)return;
+    // Prevent duplicates — check against live tab state via functional update
+    let alreadyExists=false;
+    setTabs(prev=>{
+      const cur=prev.find(t=>t.id===activeTab);
+      if(cur?.stocks.some(s=>s.s===sym)){alreadyExists=true;return prev;}
+      return prev.map(t=>t.id===activeTab?{...t,stocks:[...t.stocks,{s:sym,p:0,pc:0,loading:true}]}:t);
+    });
+    if(alreadyExists)return;
+
+    // 1. Try Yahoo Finance (fast, real-time)
     const yfResult=await fetchYFQuotes([sym]);
     if(yfResult[sym]?.p>0){
-      const {p,pc,name}=yfResult[sym];
+      const{p,pc,name}=yfResult[sym];
       if(name&&name!==sym)setNames(n=>({...n,[sym]:name}));
-      setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p,pc,loading:false}:s)}:t));
+      setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p,pc:pc||p,loading:false}:s)}:t));
       return;
     }
-    // Claude fallback
+
+    // 2. Claude web search fallback
     const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{
@@ -1058,25 +1237,27 @@ export default function StockScreener(){
         body:JSON.stringify({
           model:"claude-sonnet-4-6",max_tokens:300,
           tools:[{type:"web_search_20250305",name:"web_search"}],
-          messages:[{role:"user",content:`Today is ${today}. Search for current price of ${sym}. Reply ONLY with JSON:\n{"symbol":"${sym}","name":"Company Name","p":0,"pc":0}\nReplace zeros with real prices.`}]
+          messages:[{role:"user",content:`Today is ${today}. Search for the current price of stock ${sym}. Reply ONLY with JSON (replace zeros with real values):\n{"symbol":"${sym}","name":"Company Name","p":0,"pc":0}\np=current price, pc=previous close.`}]
         })
       });
       const data=await res.json();
       const txt=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
       const parsed=parseJSON(txt);
       let price=Number(parsed?.p||parsed?.price||0);
-      let pc2=Number(parsed?.pc||parsed?.prevClose||0)||price*0.99;
+      let prevClose=Number(parsed?.pc||parsed?.prevClose||0)||price*0.99;
       if(!price){const m=txt.match(/\$?([\d]{1,6}(?:\.\d{1,2})?)/);if(m)price=parseFloat(m[1]);}
       if(price>0){
         if(parsed?.name&&parsed.name!==sym)setNames(n=>({...n,[sym]:parsed.name}));
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:pc2,loading:false}:s)}:t));
+        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose,loading:false}:s)}:t));
       }else{
         setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
       }
     }catch{
       setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
     }
-  };
+  },[activeTab]);
+
+  const addTicker=()=>{if(newTicker.trim()){addTickerBySymbol(newTicker);setNewTicker("");}}
 
   const addTab=()=>{
     if(!newTabName.trim())return;
@@ -1175,10 +1356,13 @@ export default function StockScreener(){
       {/* ── CONTROLS ────────────────────────────── */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",flexWrap:"wrap",gap:8,marginBottom:10}}>
         <div style={{display:"flex",gap:6}}>
-          <input value={newTicker} onChange={e=>setNewTicker(e.target.value.toUpperCase())}
+          <TickerSearch
+            value={newTicker}
+            onChange={setNewTicker}
+            onSelect={sym=>{setNewTicker("");addTickerBySymbol(sym);}}
             onKeyDown={e=>e.key==="Enter"&&addTicker()}
-            placeholder="Add ticker…"
-            style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:12,width:100,outline:"none",fontFamily:T.mono,boxShadow:T.shadow}}/>
+            T={T}
+          />
           <button onClick={addTicker} style={{padding:"6px 12px",borderRadius:8,border:"none",background:T.accent,color:"#fff",fontSize:12,cursor:"pointer",fontWeight:600,fontFamily:T.sans}}>+</button>
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
