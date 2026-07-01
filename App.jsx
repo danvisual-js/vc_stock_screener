@@ -323,6 +323,27 @@ p = current/last trade price, pc = previous session close.`
 const MONTHS={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
 function parseDate(str){const[mon,day]=(str||"").split(" ");return new Date(2026,MONTHS[mon]??6,parseInt(day)||1);}
 
+// Yahoo Finance analyst summary (financialData, keyStats, upgrades)
+async function fetchYFSummary(symbol){
+  const url=`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${toYF(symbol)}?modules=financialData,defaultKeyStatistics,upgradesDowngradesHistory`;
+  try{const d=await yfFetch(url);return d?.quoteSummary?.result?.[0]||null;}catch{return null;}
+}
+
+// Yahoo Finance news search
+async function fetchYFNews(query,count=6){
+  const url=`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=${count}&enableFuzzyQuery=false`;
+  try{const d=await yfFetch(url);return d?.news||[];}catch{return[];}
+}
+
+// Simple keyword-based sentiment for news headlines
+function inferSentiment(title){
+  const t=title.toLowerCase();
+  const bull=["rises","gains","jumps","surges","rallies","beats","record","strong","high","bull","up","growth","profit","positive"];
+  const bear=["falls","drops","slips","tumbles","misses","weak","low","bear","down","recession","inflation","loss","warning","sell-off","plunge"];
+  const b=bull.filter(w=>t.includes(w)).length, s=bear.filter(w=>t.includes(w)).length;
+  return b>s?"bullish":s>b?"bearish":"neutral";
+}
+
 // 20-point sparkline for card thumbnails
 function genSparkline(price,chPct,n=22){
   const rand=lcgRand(Math.floor(price*31+7));
@@ -696,8 +717,14 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing})
           {news.length>0&&<>
             {(newsOpen?news:news.slice(0,2)).map((n,i)=>(
               <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:10,paddingBottom:i<(newsOpen?news:news.slice(0,2)).length-1?10:0,borderBottom:i<(newsOpen?news:news.slice(0,2)).length-1?`1px solid ${T.border}`:"none"}}>
-                <span style={{fontSize:13,color:sentC(n.sentiment),flexShrink:0,marginTop:1}}>{sentI(n.sentiment)}</span>
-                <span style={{fontSize:12,color:T.text,lineHeight:1.45,fontFamily:T.sans}}>{n.h}</span>
+                <span style={{fontSize:13,color:sentC(n.sentiment||"neutral"),flexShrink:0,marginTop:1}}>{sentI(n.sentiment||"neutral")}</span>
+                <div style={{minWidth:0}}>
+                  {n.url
+                    ?<a href={n.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:T.text,lineHeight:1.45,fontFamily:T.sans,textDecoration:"none",display:"block"}}>{n.h}</a>
+                    :<span style={{fontSize:12,color:T.text,lineHeight:1.45,fontFamily:T.sans}}>{n.h}</span>
+                  }
+                  {n.publisher&&<div style={{fontSize:9,color:T.textSub,marginTop:2,fontFamily:T.sans}}>{n.publisher}{n.time?` · ${new Date(n.time*1000).toLocaleDateString()}`:""}</div>}
+                </div>
               </div>
             ))}
             {news.length>2&&(
@@ -788,16 +815,154 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing})
 }
 
 /* ════════════════════════════════════════════════════
-   STOCK DETAIL
+   YF INSIGHTS — analyst data, price targets, news
 ════════════════════════════════════════════════════ */
+const REC_CONFIG={
+  strong_buy:  {label:"Strong Buy",  color:"#22C55E"},
+  buy:         {label:"Buy",         color:"#4ADE80"},
+  hold:        {label:"Hold",        color:"#F59E0B"},
+  underperform:{label:"Underperform",color:"#F97316"},
+  sell:        {label:"Sell",        color:"#EF4444"},
+};
+
+function YFInsights({symbol,price,T}){
+  const [summary, setSummary]=useState(null);
+  const [news,    setNews]   =useState([]);
+  const [loading, setLoading]=useState(true);
+
+  useEffect(()=>{
+    setLoading(true);setSummary(null);setNews([]);
+    Promise.all([
+      fetchYFSummary(symbol),
+      fetchYFNews(symbol,5),
+    ]).then(([s,n])=>{
+      setSummary(s);
+      setNews((n||[]).slice(0,4));
+    }).catch(()=>{}).finally(()=>setLoading(false));
+  },[symbol]);
+
+  if(loading) return(
+    <div style={{padding:"16px",background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12}}>
+      <div style={{fontSize:12,color:T.textSub,fontFamily:T.sans,animation:"pulse 1.2s infinite"}}>Loading analyst data…</div>
+    </div>
+  );
+
+  const fd=summary?.financialData, ks=summary?.defaultKeyStatistics;
+  const upgrades=(summary?.upgradesDowngradesHistory?.history||[]).slice(0,3);
+  const rec=fd?.recommendationKey;
+  const cfg=REC_CONFIG[rec];
+  const target=fd?.targetMeanPrice?.raw;
+  const targetLow=fd?.targetLowPrice?.raw;
+  const targetHigh=fd?.targetHighPrice?.raw;
+  const analysts=fd?.numberOfAnalystOpinions?.raw;
+  const upside=target&&price?((target-price)/price*100):null;
+  const pe=ks?.forwardPE?.raw||ks?.trailingPE?.raw;
+  const beta=ks?.beta?.raw;
+  const w52h=ks?.fiftyTwoWeekHigh?.raw;
+  const w52l=ks?.fiftyTwoWeekLow?.raw;
+
+  const noData=!fd&&!ks&&!news.length;
+  if(noData) return(
+    <div style={{padding:"12px 16px",background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12}}>
+      <div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>No analyst data available for {symbol}.</div>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12,overflow:"hidden"}}>
+      {/* Analyst consensus header */}
+      {cfg&&(
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.insightBorder}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:3}}>Analyst Consensus · {analysts||"—"} analysts</div>
+            <span style={{padding:"3px 12px",borderRadius:7,background:`${cfg.color}22`,color:cfg.color,fontSize:13,fontWeight:700,fontFamily:T.sans}}>{cfg.label}</span>
+          </div>
+          {upside!==null&&(
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:9,color:T.textSub,fontFamily:T.sans,marginBottom:2}}>Avg Target</div>
+              <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:T.text}}>${target?.toFixed(2)}</div>
+              <div style={{fontSize:11,fontWeight:600,color:upside>=0?T.up:T.down,fontFamily:T.sans}}>{upside>=0?"+":""}{upside.toFixed(1)}% upside</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Price target range bar */}
+      {targetLow&&targetHigh&&price&&(
+        <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:6}}>12-Month Price Target Range</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontFamily:T.mono,fontSize:10,color:T.down,minWidth:44}}>${targetLow.toFixed(0)}</span>
+            <div style={{flex:1,position:"relative",height:6,background:T.border,borderRadius:3}}>
+              <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:`linear-gradient(90deg,${T.down}60,${T.up}60)`,borderRadius:3}}/>
+              {/* Current price marker */}
+              {price&&(()=>{const pct=Math.max(0,Math.min(100,((price-targetLow)/(targetHigh-targetLow))*100));return(
+                <div style={{position:"absolute",top:-3,width:12,height:12,borderRadius:6,background:T.text,border:`2px solid ${T.surface}`,left:`calc(${pct}% - 6px)`,boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+              );})()}
+            </div>
+            <span style={{fontFamily:T.mono,fontSize:10,color:T.up,minWidth:44,textAlign:"right"}}>${targetHigh.toFixed(0)}</span>
+          </div>
+          <div style={{textAlign:"center",fontSize:9,color:T.textSub,marginTop:4,fontFamily:T.sans}}>◆ current ${price.toFixed(2)}</div>
+        </div>
+      )}
+
+      {/* Key stats */}
+      {(pe||beta||w52h||w52l)&&(
+        <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[["Fwd P/E",pe?.toFixed(1)],["Beta",beta?.toFixed(2)],["52W High",w52h?`$${w52h.toFixed(2)}`:null],["52W Low",w52l?`$${w52l.toFixed(2)}`:null]]
+            .filter(([,v])=>v).map(([l,v])=>(
+            <div key={l} style={{background:T.surface,borderRadius:6,padding:"6px 10px"}}>
+              <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.06em",fontFamily:T.sans}}>{l}</div>
+              <div style={{fontFamily:T.mono,fontSize:12,fontWeight:600,color:T.text,marginTop:2}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recent upgrades/downgrades */}
+      {upgrades.length>0&&(
+        <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:7,fontFamily:T.sans}}>Recent Analyst Actions</div>
+          {upgrades.map((u,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5,fontSize:11}}>
+              <span style={{color:T.text,fontFamily:T.sans}}>{u.firm}</span>
+              <span style={{color:u.action==="up"?T.up:T.down,fontWeight:700}}>
+                {u.action==="up"?"↑":"↓"} {u.toGrade}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Latest news */}
+      {news.length>0&&(
+        <div style={{padding:"10px 16px"}}>
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:7,fontFamily:T.sans}}>Latest News</div>
+          {news.map((n,i)=>(
+            <a key={i} href={n.link} target="_blank" rel="noopener noreferrer" style={{
+              display:"block",padding:"7px 0",
+              borderBottom:i<news.length-1?`1px solid ${T.border}`:"none",
+              textDecoration:"none",
+            }}>
+              <div style={{fontSize:11,color:T.text,lineHeight:1.4,fontFamily:T.sans}}>{n.title}</div>
+              <div style={{fontSize:9,color:T.textSub,marginTop:2,fontFamily:T.sans}}>
+                {n.publisher} · {new Date((n.providerPublishTime||0)*1000).toLocaleDateString()}
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function StockDetail({selected,names,T,onClose}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false});
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
-  const [insight,setInsight]=useState("");
-  const [loadingAI,setLoadingAI]=useState(false);
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
 
   useEffect(()=>{
@@ -815,14 +980,6 @@ function StockDetail({selected,names,T,onClose}){
   const chartData=useMemo(()=>enrich(rawChart),[rawChart]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
-  const getInsight=async()=>{
-    setLoadingAI(true);setInsight("");
-    try{
-      const raw=await callClaude(`2-3 sentence day trader brief on ${selected.s} (${names[selected.s]||selected.s}) June 22 2026, price $${f2(selected.p)} ${ch>=0?"+":""}${f2(ch)}% today. Cover: main driver, 2 key catalysts, weekly price target range. Be specific.`);
-      setInsight(raw.trim()||"No insight.");
-    }catch{setInsight("Fetch failed — try again.");}
-    finally{setLoadingAI(false);}
-  };
   return(
     <div style={{animation:"fadeUp 0.18s ease"}}>
       <div style={{background:T.surface,borderRadius:14,padding:"16px",marginBottom:10,border:`1px solid ${T.border}`,boxShadow:T.shadow}}>
@@ -851,16 +1008,83 @@ function StockDetail({selected,names,T,onClose}){
       </div>
       {ind.volume&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>Volume</div><VolumePanel data={chartData} T={T}/></div>}
       {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
-      <div style={{background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12,padding:"14px 16px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:insight?10:0}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.accent,fontFamily:T.sans}}>✦ AI Insight</div>
-          <button onClick={getInsight} disabled={loadingAI} style={{padding:"5px 14px",borderRadius:8,border:loadingAI?`1px solid ${T.border}`:"none",background:loadingAI?"transparent":`linear-gradient(135deg,#312E81,#4338CA)`,color:loadingAI?T.textSub:"#C7D2FE",fontSize:11,fontWeight:600,cursor:loadingAI?"default":"pointer",fontFamily:T.sans}}>
-            {loadingAI?<span style={{animation:"pulse 1.1s infinite"}}>Searching…</span>:"Generate"}
-          </button>
+      <YFInsights symbol={selected.s} price={selected.p} T={T}/>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   RECOMMENDATIONS — Yahoo Finance analyst consensus
+════════════════════════════════════════════════════ */
+function Recommendations({stocks,T}){
+  const [recs,setRecs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [open,setOpen]=useState(true);
+  const key=stocks.filter(s=>s.p>0).slice(0,6).map(s=>s.s).join(",");
+
+  useEffect(()=>{
+    const top=stocks.filter(s=>s.p>0).slice(0,6);
+    if(!top.length){setLoading(false);return;}
+    setLoading(true);
+    Promise.all(top.map(async stock=>{
+      const s=await fetchYFSummary(stock.s);
+      if(!s)return null;
+      const fd=s.financialData;
+      if(!fd?.recommendationKey)return null;
+      const rec=fd.recommendationKey;
+      const target=fd.targetMeanPrice?.raw;
+      const targetLow=fd.targetLowPrice?.raw;
+      const targetHigh=fd.targetHighPrice?.raw;
+      const analysts=fd.numberOfAnalystOpinions?.raw;
+      const upside=target&&stock.p?((target-stock.p)/stock.p*100):null;
+      return{symbol:stock.s,price:stock.p,rec,target,targetLow,targetHigh,analysts,upside};
+    })).then(r=>setRecs(r.filter(Boolean))).finally(()=>setLoading(false));
+  },[key]);
+
+  const refresh=()=>{setRecs([]);setLoading(true);/* trigger re-fetch via key change workaround */};
+
+  return(
+    <div style={{background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,marginTop:14,overflow:"hidden",boxShadow:T.shadow}}>
+      <div onClick={()=>setOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",cursor:"pointer",borderBottom:open?`1px solid ${T.border}`:"none"}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans}}>📊 Analyst Consensus</div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {loading&&<span style={{fontSize:10,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</span>}
+          <span style={{color:T.textSub,fontSize:12}}>{open?"▲":"▼"}</span>
         </div>
-        {insight&&<div style={{fontSize:12,color:T.insightText,lineHeight:1.65,fontFamily:T.sans}}>{insight}</div>}
-        {!insight&&!loadingAI&&<div style={{fontSize:11,color:T.textSub,marginTop:6,fontFamily:T.sans}}>Live AI brief: driver · catalysts · weekly price target for {selected.s}</div>}
       </div>
+      {open&&(
+        <div style={{padding:"14px 16px"}}>
+          {recs.length>0?(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
+              {recs.map(r=>{
+                const cfg=REC_CONFIG[r.rec]||{label:"Hold",color:T.ema9};
+                return(
+                  <div key={r.symbol} style={{background:T.surfaceB,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:T.text}}>{r.symbol}</span>
+                      <span style={{padding:"3px 8px",borderRadius:6,background:`${cfg.color}20`,color:cfg.color,fontSize:10,fontWeight:700,fontFamily:T.sans}}>{cfg.label}</span>
+                    </div>
+                    {r.target&&(
+                      <div style={{fontSize:11,fontFamily:T.sans}}>
+                        <span style={{color:T.textSub}}>Target </span>
+                        <span style={{color:T.text,fontWeight:600}}>${r.target.toFixed(2)}</span>
+                        {r.upside!==null&&(
+                          <span style={{marginLeft:6,color:r.upside>=0?T.up:T.down,fontWeight:600}}>
+                            {r.upside>=0?"+":""}{r.upside.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {r.analysts&&<div style={{fontSize:10,color:T.textSub,marginTop:3,fontFamily:T.sans}}>{r.analysts} analysts</div>}
+                  </div>
+                );
+              })}
+            </div>
+          ):!loading&&(
+            <div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>No analyst data found for current watchlist.</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1190,10 +1414,12 @@ export default function StockScreener(){
     // Update names from Yahoo data
     Object.entries(priceMap).forEach(([sym,d])=>{if(d.name&&d.name!==sym)setNames(n=>({...n,[sym]:d.name}));});
 
-    // ── Step 4: News in background ───────────────────────────────
-    callClaude("Top 3 stock market news right now. JSON only.",
-      `Return ONLY raw JSON: {"news":[{"h":"headline","sentiment":"bullish|bearish|neutral"}]}`)
-      .then(r=>{const p=parseJSON(r);if(p?.news?.length)setMktNews(p.news);}).catch(()=>{});
+    // ── Step 4: Market news from Yahoo Finance ───────────────────
+    fetchYFNews("stock market today",6).then(articles=>{
+      if(articles.length){
+        setMktNews(articles.map(n=>({h:n.title,url:n.link,publisher:n.publisher,time:n.providerPublishTime,sentiment:inferSentiment(n.title)})));
+      }
+    }).catch(()=>{});
 
     setLastRefresh(new Date());
     setRefreshing(false);
@@ -1398,7 +1624,7 @@ export default function StockScreener(){
       <Recommendations stocks={stocks} T={T}/>
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
-        AI insights via Claude + web search · Chart data is synthetic/illustrative · Not financial advice
+        Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
       </div>
     </div>
   );
