@@ -1016,7 +1016,7 @@ function StockDetail({selected,names,T,onClose}){
 /* ════════════════════════════════════════════════════
    RECOMMENDATIONS — Yahoo Finance analyst consensus
 ════════════════════════════════════════════════════ */
-function Recommendations({stocks,T}){
+function AnalystRecommendations({stocks,T}){
   const [recs,setRecs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [open,setOpen]=useState(true);
@@ -1092,7 +1092,7 @@ function Recommendations({stocks,T}){
 /* ════════════════════════════════════════════════════
    RECOMMENDATIONS
 ════════════════════════════════════════════════════ */
-function Recommendations({stocks,T}){
+function StockRecommendations({stocks,T}){
   const [recs,setRecs]=useState(null);
   const [loading,setLoading]=useState(false);
   const [open,setOpen]=useState(true);
