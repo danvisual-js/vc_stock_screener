@@ -1621,7 +1621,7 @@ export default function StockScreener(){
       )}
 
       {/* ── RECOMMENDATIONS ──────────────────────── */}
-      <Recommendations stocks={stocks} T={T}/>
+      <AnalystRecommendations stocks={stocks} T={T}/>
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
         Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
