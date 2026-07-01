@@ -149,7 +149,7 @@ function findSR(data,lb=10){
 async function callClaude(userMsg,system){
   const body={model:"claude-sonnet-4-6",max_tokens:1000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:userMsg}]};
   if(system)body.system=system;
-  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const data=await res.json();
   return data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
 }
@@ -264,7 +264,7 @@ async function fetchPrices(symbols){
   const template=Object.fromEntries(symbols.map(s=>[s,{p:0,pc:0}]));
 
   try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{
+    const res=await fetch("/api/claude",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
@@ -1156,7 +1156,7 @@ export default function StockScreener(){
       const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
       const template=Object.fromEntries(missing.map(s=>[s,{p:0,pc:0}]));
       try{
-        const res=await fetch("https://api.anthropic.com/v1/messages",{
+        const res=await fetch("/api/claude",{
           method:"POST",headers:{"Content-Type":"application/json"},
           body:JSON.stringify({
             model:"claude-sonnet-4-6",max_tokens:800,
@@ -1232,7 +1232,7 @@ export default function StockScreener(){
     // 2. Claude web search fallback
     const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
     try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
+      const res=await fetch("/api/claude",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           model:"claude-sonnet-4-6",max_tokens:300,
