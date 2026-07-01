@@ -173,28 +173,149 @@ function extractPrice(text){
   return null;
 }
 
-// Fetch prices for a batch of symbols — no system prompt, explicit user instructions
+/* ══════════════════════════════════════════════════════
+   YAHOO FINANCE — real-time price & chart data
+   Uses a CORS proxy since browser can't call YF directly
+══════════════════════════════════════════════════════ */
+// Some display symbols differ from Yahoo Finance symbols
+const YF_MAP = { DJI:"^DJI", VIX:"^VIX", GSPC:"^GSPC" };
+const YF_REV = Object.fromEntries(Object.entries(YF_MAP).map(([k,v])=>[v,k]));
+const toYF   = s => YF_MAP[s]||s;
+const fromYF = s => YF_REV[s]||s;
+
+// Fetch through a CORS proxy — tries two services for reliability
+async function yfFetch(url){
+  const proxies=[
+    "https://corsproxy.io/?"+encodeURIComponent(url),
+    "https://api.allorigins.win/raw?url="+encodeURIComponent(url),
+  ];
+  for(const p of proxies){
+    try{
+      const r=await fetch(p,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
+      if(!r.ok)continue;
+      const txt=await r.text();
+      if(txt&&txt.length>20)return JSON.parse(txt);
+    }catch{}
+  }
+  return null;
+}
+
+// Batch real-time quotes — returns {SYM:{p,pc,name,change,changePct}}
+async function fetchYFQuotes(symbols){
+  if(!symbols.length)return{};
+  const yfSyms=symbols.map(toYF).join(",");
+  const url=`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfSyms}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,shortName,regularMarketVolume`;
+  try{
+    const data=await yfFetch(url);
+    const quotes=data?.quoteResponse?.result||[];
+    const result={};
+    quotes.forEach(q=>{
+      const sym=fromYF(q.symbol);
+      const p=Number(q.regularMarketPrice)||0;
+      const pc=Number(q.regularMarketPreviousClose)||p;
+      if(p>0) result[sym]={p,pc,name:q.shortName||q.longName||sym,volume:q.regularMarketVolume||0};
+    });
+    return result;
+  }catch{return{};}
+}
+
+// Timeframe → Yahoo Finance interval + range
+const YF_TF={
+  "1m": {interval:"1m", range:"1d"},
+  "5m": {interval:"5m", range:"5d"},
+  "15m":{interval:"15m",range:"5d"},
+  "1h": {interval:"60m",range:"5d"},
+  "1W": {interval:"1d", range:"5d"},
+  "1M": {interval:"1d", range:"1mo"},
+  "3M": {interval:"1d", range:"3mo"},
+  "6M": {interval:"1d", range:"6mo"},
+  "1Y": {interval:"1d", range:"1y"},
+};
+
+// Real OHLCV chart bars from Yahoo Finance
+async function fetchYFChart(symbol, tf){
+  const {interval,range}=YF_TF[tf]||YF_TF["5m"];
+  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${toYF(symbol)}?interval=${interval}&range=${range}&includePrePost=false`;
+  try{
+    const data=await yfFetch(url);
+    const res=data?.chart?.result?.[0];
+    if(!res)return null;
+    const ts=res.timestamp||[];
+    const q=res.indicators?.quote?.[0]||{};
+    const isIntra=["1m","5m","15m","1h"].includes(tf);
+    const bars=ts.map((t,i)=>{
+      const open=q.open?.[i]||0, close=q.close?.[i]||0;
+      const high=q.high?.[i]||0,  low=q.low?.[i]||0;
+      const volume=q.volume?.[i]||0;
+      const d=new Date(t*1000);
+      const label=isIntra
+        ?d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})
+        :d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+      return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open};
+    }).filter(b=>b.close>0&&b.high>0);
+    return bars.length>5?bars:null;
+  }catch{return null;}
+}
 async function fetchPrices(symbols){
-  const eg=JSON.stringify(Object.fromEntries(symbols.slice(0,2).map(s=>[s,{p:298.14,pc:295.95}])));
+  if(!symbols.length)return{};
+  // Use today's actual date so Claude knows it must search, not use training data
+  const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  // Zero-placeholder template — Claude must replace zeros with real values
+  const template=Object.fromEntries(symbols.map(s=>[s,{p:0,pc:0}]));
+
   try{
     const res=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         model:"claude-sonnet-4-6",
-        max_tokens:1000,
+        max_tokens:1200,
         tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:`Use web search to look up the current real-time stock prices for: ${symbols.join(", ")}.
+        messages:[{role:"user",content:
+`Today is ${today}. Search the web RIGHT NOW for the latest trading prices of these tickers: ${symbols.join(", ")}.
 
-After searching, reply with ONLY this JSON — no explanation, no markdown fences, just the raw object:
-${eg}
+These are ${new Date().getFullYear()} prices — your training data is too old. You MUST search the web to get current values.
 
-Replace example values with the actual prices you find for all ${symbols.length} tickers.`}]
+After searching, output ONLY this JSON with the zeros replaced by real prices. No explanation, no markdown:
+${JSON.stringify(template)}
+
+p = current/last trade price, pc = previous session close.`
+        }]
       })
     });
     const d=await res.json();
     const txt=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
-    return parseJSON(txt)||{};
+
+    // ── Strategy 1: parse JSON ──────────────────────────────────────
+    const parsed=parseJSON(txt);
+    if(parsed){
+      const result={};
+      symbols.forEach(sym=>{
+        const e=parsed[sym]||parsed[sym.toLowerCase()];
+        if(e){
+          const p=Number(e.p||e.price||e.last||0);
+          const pc=Number(e.pc||e.prevClose||e.previousClose||0)||p*0.99;
+          if(p>0)result[sym]={p,pc};       // only keep if non-zero
+        }
+      });
+      if(Object.keys(result).length>0)return result;
+    }
+
+    // ── Strategy 2: per-symbol line scan ───────────────────────────
+    const result={};
+    const lines=txt.split(/\n|,|\|/);
+    symbols.forEach(sym=>{
+      if(result[sym])return;
+      for(const line of lines){
+        if(!line.toUpperCase().includes(sym))continue;
+        // Find all price-shaped numbers on this line
+        const nums=[...line.matchAll(/\$?([\d]{1,6}(?:,\d{3})*(?:\.\d{1,2})?)/g)]
+          .map(m=>parseFloat(m[1].replace(/,/g,"")))
+          .filter(n=>n>0.5&&n<100000);
+        if(nums.length){result[sym]={p:nums[0],pc:nums[1]??nums[0]*0.99};break;}
+      }
+    });
+    return result;
   }catch{return{};}
 }
 
@@ -463,10 +584,23 @@ function IndexChart({index,T}){
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,volume:false,macd:false,support:false});
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
-  const raw=useMemo(()=>genHistory(index.p,pct(index.p,index.pc),365),[index.s]);
-  const full=useMemo(()=>enrich(raw),[raw]);
-  const data=useMemo(()=>getChartData(index.p,pct(index.p,index.pc),tf),[index.s,index.p,tf]);
-  const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(data):[],[data,tf]);
+  const [rawChart,setRawChart]=useState([]);
+  const [chartLoading,setChartLoading]=useState(false);
+
+  useEffect(()=>{
+    let cancelled=false;
+    setChartLoading(true);setRawChart([]);
+    fetchYFChart(index.s,tf).then(data=>{
+      if(cancelled)return;
+      if(data?.length>5){setRawChart(data);}
+      else{const{barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];setRawChart(genBars(index.p,pct(index.p,index.pc),barMin,n));}
+      setChartLoading(false);
+    });
+    return()=>{cancelled=true;};
+  },[index.s,index.p,tf]);
+
+  const data=useMemo(()=>enrich(rawChart),[rawChart]);
+  const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
   const ch=pct(index.p,index.pc),isUp=ch>=0;
   const col=isUp?T.up:T.down;
   return(
@@ -642,11 +776,26 @@ function StockDetail({selected,names,T,onClose}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false});
+  const [rawChart,setRawChart]=useState([]);
+  const [chartLoading,setChartLoading]=useState(false);
   const [insight,setInsight]=useState("");
   const [loadingAI,setLoadingAI]=useState(false);
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
-  const chartData=useMemo(()=>getChartData(selected.p,pct(selected.p,selected.pc),tf),[selected.s,selected.p,tf]);
-  const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(chartData):[],[chartData,tf]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    setChartLoading(true);setRawChart([]);
+    fetchYFChart(selected.s,tf).then(data=>{
+      if(cancelled)return;
+      if(data?.length>5){setRawChart(data);}
+      else{const{barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];setRawChart(genBars(selected.p,pct(selected.p,selected.pc),barMin,n));}
+      setChartLoading(false);
+    });
+    return()=>{cancelled=true;};
+  },[selected.s,tf]);
+
+  const chartData=useMemo(()=>enrich(rawChart),[rawChart]);
+  const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
   const getInsight=async()=>{
     setLoadingAI(true);setInsight("");
@@ -671,11 +820,16 @@ function StockDetail({selected,names,T,onClose}){
         </div>
       </div>
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
-      <div style={{background:T.surface,borderRadius:12,padding:"10px 8px",marginBottom:8,border:`1px solid ${T.border}`,boxShadow:T.shadow}}>
-        {chartData.length>0&&(chartMode==="candle"
-          ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} T={T}/>
-          :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} T={T} height={195} accent={isUp?T.up:T.down}/>
-        )}
+      <div style={{background:T.surface,borderRadius:12,padding:"10px 8px",marginBottom:8,border:`1px solid ${T.border}`,boxShadow:T.shadow,minHeight:220}}>
+        {chartLoading
+          ?<div style={{height:210,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:T.textSub,fontSize:12,fontFamily:T.sans}}>
+            <span style={{animation:"pulse 1.2s infinite",display:"inline-block"}}>⟳</span> Fetching real-time chart…
+           </div>
+          :chartData.length>0&&(chartMode==="candle"
+            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} T={T}/>
+            :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} T={T} height={195} accent={isUp?T.up:T.down}/>
+          )
+        }
       </div>
       {ind.volume&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>Volume</div><VolumePanel data={chartData} T={T}/></div>}
       {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
@@ -820,50 +974,55 @@ export default function StockScreener(){
     const valid=(stockList||[]).filter(s=>!s.loading&&s.s);
     setRefreshing(true);
 
-    // Combine stock symbols + index symbols into one pool of batches
-    const idxSyms=INDICES.map(i=>i.s);
-    const allSyms=[...new Set([...valid.map(s=>s.s),...idxSyms])];
-    const batchSize=4;
-    const batches=[];
-    for(let i=0;i<allSyms.length;i+=batchSize)batches.push(allSyms.slice(i,i+batchSize));
+    const allSymbols=[...new Set([...valid.map(s=>s.s),...INDICES.map(i=>i.s)])];
 
-    // Fire all price batches + news fetch in parallel
-    const [batchResults,newsRaw]=await Promise.all([
-      Promise.all(batches.map(b=>fetchPrices(b))),
-      callClaude(
-        "Today: 3 top stock market news items with sentiment. JSON only.",
-        `Return ONLY raw JSON: {"news":[{"h":"headline","sentiment":"bullish|bearish|neutral"}]}`
-      ).catch(()=>"")
-    ]);
+    // ── Step 1: Yahoo Finance (fast, real-time) ──────────────────
+    let priceMap=await fetchYFQuotes(allSymbols);
 
-    const merged=Object.assign({},...batchResults);
+    // ── Step 2: Claude fallback for any missing symbols ──────────
+    const missing=allSymbols.filter(s=>!priceMap[s]||priceMap[s].p===0);
+    if(missing.length>0){
+      const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+      const template=Object.fromEntries(missing.map(s=>[s,{p:0,pc:0}]));
+      try{
+        const res=await fetch("https://api.anthropic.com/v1/messages",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            model:"claude-sonnet-4-6",max_tokens:800,
+            tools:[{type:"web_search_20250305",name:"web_search"}],
+            messages:[{role:"user",content:`Today is ${today}. Search the web for current prices of: ${missing.join(", ")}. Fill in this JSON with real prices (replace zeros):\n${JSON.stringify(template)}\nOutput JSON only.`}]
+          })
+        });
+        const d=await res.json();
+        const txt=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+        const parsed=parseJSON(txt)||{};
+        missing.forEach(s=>{
+          const e=parsed[s]||parsed[s.toLowerCase()];
+          if(e){const p=Number(e.p||e.price||0),pc=Number(e.pc||e.prevClose||p*0.99);if(p>0)priceMap[s]={p,pc};}
+        });
+      }catch{}
+    }
 
-    // Update news
-    const parsedNews=parseJSON(newsRaw);
-    if(parsedNews?.news?.length)setMktNews(parsedNews.news);
-
-    // Update index prices
+    // ── Step 3: Apply updates ────────────────────────────────────
     setIndices(prev=>prev.map(idx=>{
-      const u=merged[idx.s];
-      if(!u)return idx;
-      const p=Number(u.p||u.price||0);
-      const pc=Number(u.pc||u.prevClose||p*0.99);
-      return p>0?{...idx,p,pc}:idx;
+      const u=priceMap[idx.s];
+      return u?.p>0?{...idx,p:u.p,pc:u.pc}:idx;
     }));
-
-    // Update stock prices
     if(valid.length>0){
       setTabs(prev=>prev.map(t=>t.id===activeTab?{
-        ...t,
-        stocks:t.stocks.map(s=>{
-          const u=merged[s.s]||merged[s.s?.toLowerCase()];
-          if(!u)return s;
-          const p=Number(u.p||u.price||0);
-          const pc=Number(u.pc||u.prevClose||p*0.99);
-          return p>0?{...s,p,pc}:s;
+        ...t,stocks:t.stocks.map(s=>{
+          const u=priceMap[s.s];
+          return u?.p>0?{...s,p:u.p,pc:u.pc}:s;
         })
       }:t));
     }
+    // Update names from Yahoo data
+    Object.entries(priceMap).forEach(([sym,d])=>{if(d.name&&d.name!==sym)setNames(n=>({...n,[sym]:d.name}));});
+
+    // ── Step 4: News in background ───────────────────────────────
+    callClaude("Top 3 stock market news right now. JSON only.",
+      `Return ONLY raw JSON: {"news":[{"h":"headline","sentiment":"bullish|bearish|neutral"}]}`)
+      .then(r=>{const p=parseJSON(r);if(p?.news?.length)setMktNews(p.news);}).catch(()=>{});
 
     setLastRefresh(new Date());
     setRefreshing(false);
@@ -883,33 +1042,34 @@ export default function StockScreener(){
     if(!sym||curTab.stocks.some(s=>s.s===sym)){setNewTicker("");return;}
     setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:[...t.stocks,{s:sym,p:0,pc:0,loading:true}]}:t));
     setNewTicker("");
+    // Try Yahoo Finance first (fast + accurate)
+    const yfResult=await fetchYFQuotes([sym]);
+    if(yfResult[sym]?.p>0){
+      const {p,pc,name}=yfResult[sym];
+      if(name&&name!==sym)setNames(n=>({...n,[sym]:name}));
+      setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p,pc,loading:false}:s)}:t));
+      return;
+    }
+    // Claude fallback
+    const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
+        method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          model:"claude-sonnet-4-6",
-          max_tokens:500,
+          model:"claude-sonnet-4-6",max_tokens:300,
           tools:[{type:"web_search_20250305",name:"web_search"}],
-          messages:[{role:"user",content:`Search the web for the current real-time stock price of ${sym}.
-
-Reply with ONLY this JSON and nothing else:
-{"symbol":"${sym}","name":"Full Company Name","price":123.45,"prevClose":121.00}
-
-Use the actual current price from your search results.`}]
+          messages:[{role:"user",content:`Today is ${today}. Search for current price of ${sym}. Reply ONLY with JSON:\n{"symbol":"${sym}","name":"Company Name","p":0,"pc":0}\nReplace zeros with real prices.`}]
         })
       });
       const data=await res.json();
       const txt=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
       const parsed=parseJSON(txt);
-      let price=Number(parsed?.price||parsed?.p||0);
-      let prevClose=Number(parsed?.prevClose||parsed?.pc||0);
-      // Regex fallback if JSON parsing missed the price
-      if(!price){const fp=extractPrice(txt);if(fp)price=fp;}
+      let price=Number(parsed?.p||parsed?.price||0);
+      let pc2=Number(parsed?.pc||parsed?.prevClose||0)||price*0.99;
+      if(!price){const m=txt.match(/\$?([\d]{1,6}(?:\.\d{1,2})?)/);if(m)price=parseFloat(m[1]);}
       if(price>0){
-        if(parsed?.name)setNames(n=>({...n,[sym]:parsed.name}));
-        if(!prevClose)prevClose=price*0.99;
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose,loading:false}:s)}:t));
+        if(parsed?.name&&parsed.name!==sym)setNames(n=>({...n,[sym]:parsed.name}));
+        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:pc2,loading:false}:s)}:t));
       }else{
         setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
       }
@@ -927,7 +1087,7 @@ Use the actual current price from your search results.`}]
   const removeTab=id=>{setTabs(p=>p.filter(t=>t.id!==id));if(activeTab===id)setActiveTab(tabs[0].id);};
   const removeTicker=sym=>{setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.filter(s=>s.s!==sym)}:t));if(selected?.s===sym)setSelected(null);};
 
-  const timeSince=lastRefresh?`Updated ${Math.floor((Date.now()-lastRefresh)/60000)||"<1"} min ago`:"";
+  const timeSince=lastRefresh?`Yahoo Finance · ${lastRefresh.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}`:"Live prices via Yahoo Finance on refresh";
 
   const StockList=(
     <div style={{maxHeight:isMobile?"none":"52vh",overflowY:"auto"}}>
