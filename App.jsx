@@ -183,34 +183,39 @@ const YF_REV = Object.fromEntries(Object.entries(YF_MAP).map(([k,v])=>[v,k]));
 const toYF   = s => YF_MAP[s]||s;
 const fromYF = s => YF_REV[s]||s;
 
-// Route through our own Vercel serverless proxy — no CORS issues, no rate limits
+// Fetch through a CORS proxy — tries two services for reliability
 async function yfFetch(url){
-  try{
-    const r=await fetch("/api/quotes?url="+encodeURIComponent(url),{
-      headers:{Accept:"application/json"},
-      signal:AbortSignal.timeout(10000),
-    });
-    if(!r.ok)return null;
-    const txt=await r.text();
-    if(txt&&txt.length>20)return JSON.parse(txt);
-  }catch{}
+  const proxies=[
+    "https://corsproxy.io/?"+encodeURIComponent(url),
+    "https://api.allorigins.win/raw?url="+encodeURIComponent(url),
+  ];
+  for(const p of proxies){
+    try{
+      const r=await fetch(p,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
+      if(!r.ok)continue;
+      const txt=await r.text();
+      if(txt&&txt.length>20)return JSON.parse(txt);
+    }catch{}
+  }
   return null;
 }
 
-// Batch real-time quotes — returns {SYM:{p,pc,name,change,changePct}}
+// Batch real-time quotes via our serverless proxy (uses yahoo-finance2)
 async function fetchYFQuotes(symbols){
   if(!symbols.length)return{};
   const yfSyms=symbols.map(toYF).join(",");
-  const url=`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfSyms}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,shortName,regularMarketVolume`;
   try{
-    const data=await yfFetch(url);
-    const quotes=data?.quoteResponse?.result||[];
+    const r=await fetch("/api/quotes?symbols="+encodeURIComponent(yfSyms),{
+      signal:AbortSignal.timeout(12000),
+    });
+    if(!r.ok)return{};
+    const data=await r.json();
+    if(data.error)return{};
+    // Map Yahoo symbols (^DJI → DJI) back to our keys
     const result={};
-    quotes.forEach(q=>{
-      const sym=fromYF(q.symbol);
-      const p=Number(q.regularMarketPrice)||0;
-      const pc=Number(q.regularMarketPreviousClose)||p;
-      if(p>0) result[sym]={p,pc,name:q.shortName||q.longName||sym,volume:q.regularMarketVolume||0};
+    Object.entries(data).forEach(([yfSym,q])=>{
+      const sym=fromYF(yfSym);
+      if(q.p>0)result[sym]={p:q.p,pc:q.pc||q.p,name:q.name||sym};
     });
     return result;
   }catch{return{};}
