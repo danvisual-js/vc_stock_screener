@@ -19,8 +19,8 @@ const BASE_NAMES = {
 const INDICES = [
   {s:"SPY", name:"S&P 500",    p:730.21, pc:721.80},
   {s:"QQQ", name:"Nasdaq 100", p:498.70, pc:492.10},
-  {s:"DJI", name:"Dow Jones",  p:43215,  pc:42450 },
-  {s:"VIX", name:"VIX",        p:16.23,  pc:18.20 },
+  {s:"DIA",  name:"Dow Jones",  p:432.15, pc:424.50},
+  {s:"VIXY", name:"Volatility", p:16.23,  pc:18.20 },
 ];
 
 const DEFAULT_TABS = [
@@ -178,10 +178,9 @@ function extractPrice(text){
    Uses a CORS proxy since browser can't call YF directly
 ══════════════════════════════════════════════════════ */
 // Some display symbols differ from Yahoo Finance symbols
-const YF_MAP = { DJI:"^DJI", VIX:"^VIX", GSPC:"^GSPC" };
-const YF_REV = Object.fromEntries(Object.entries(YF_MAP).map(([k,v])=>[v,k]));
-const toYF   = s => YF_MAP[s]||s;
-const fromYF = s => YF_REV[s]||s;
+// Symbol passthrough — Finnhub uses standard tickers
+const toYF   = s => s;
+const fromYF = s => s;
 
 // Fetch through a CORS proxy — tries two services for reliability
 async function yfFetch(url){
@@ -200,22 +199,20 @@ async function yfFetch(url){
   return null;
 }
 
-// Batch real-time quotes via our serverless proxy (uses yahoo-finance2)
+// Batch real-time quotes — returns {SYM:{p,pc,name,change,changePct}}
 async function fetchYFQuotes(symbols){
   if(!symbols.length)return{};
   const yfSyms=symbols.map(toYF).join(",");
+  const url=`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfSyms}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,shortName,regularMarketVolume`;
   try{
-    const r=await fetch("/api/quotes?symbols="+encodeURIComponent(yfSyms),{
-      signal:AbortSignal.timeout(12000),
-    });
-    if(!r.ok)return{};
-    const data=await r.json();
-    if(data.error)return{};
-    // Map Yahoo symbols (^DJI → DJI) back to our keys
+    const data=await yfFetch(url);
+    const quotes=data?.quoteResponse?.result||[];
     const result={};
-    Object.entries(data).forEach(([yfSym,q])=>{
-      const sym=fromYF(yfSym);
-      if(q.p>0)result[sym]={p:q.p,pc:q.pc||q.p,name:q.name||sym};
+    quotes.forEach(q=>{
+      const sym=fromYF(q.symbol);
+      const p=Number(q.regularMarketPrice)||0;
+      const pc=Number(q.regularMarketPreviousClose)||p;
+      if(p>0) result[sym]={p,pc,name:q.shortName||q.longName||sym,volume:q.regularMarketVolume||0};
     });
     return result;
   }catch{return{};}
