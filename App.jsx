@@ -1164,71 +1164,7 @@ function Recommendations({stocks,T,refreshKey}){
       )}
     </div>
   );
-}){
-  const [recs,setRecs]=useState(null);
-  const [loading,setLoading]=useState(false);
-  const [open,setOpen]=useState(true);
-  const key=stocks.slice(0,8).map(s=>s.s).join(",");
-
-  const load=useCallback(async()=>{
-    if(!stocks.length)return;
-    setLoading(true);setRecs(null);
-    const priceInfo=stocks.slice(0,8).map(s=>`${s.s}:$${f2(s.p)}(${pct(s.p,s.pc)>=0?"+":""}${f2(pct(s.p,s.pc))}%)`).join(", ");
-    try{
-      const raw=await callClaude(
-        `Based on these stocks and their momentum: ${priceInfo}. Provide 4 concise buy/watch/avoid recommendations for a day trader. Today is June 22 2026. JSON only.`,
-        `Return ONLY raw JSON no markdown: {"recs":[{"symbol":"NVDA","action":"buy","reason":"one concise sentence","target":"$210–$220"}]}`
-      );
-      const parsed=parseJSON(raw);
-      if(parsed?.recs)setRecs(parsed.recs);
-    }catch{}
-    finally{setLoading(false);}
-  },[key]);
-
-  useEffect(()=>{load();},[key]);
-
-  const actionStyle=(action)=>{
-    const map={buy:{bg:T.upBg,color:T.up},watch:{bg:`${T.ema9}18`,color:T.ema9},avoid:{bg:T.downBg,color:T.down}};
-    return map[action?.toLowerCase()]||map.watch;
-  };
-
-  return(
-    <div style={{background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,marginTop:14,overflow:"hidden",boxShadow:T.shadow}}>
-      <div onClick={()=>setOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",cursor:"pointer",borderBottom:open?`1px solid ${T.border}`:"none"}}>
-        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans}}>✦ AI Recommendations</div>
-        <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          {!loading&&<button onClick={e=>{e.stopPropagation();load();}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,fontFamily:T.sans}}>↻ Refresh</button>}
-          {loading&&<span style={{fontSize:10,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Analyzing…</span>}
-          <span style={{color:T.textSub,fontSize:12}}>{open?"▲":"▼"}</span>
-        </div>
-      </div>
-      {open&&(
-        <div style={{padding:"14px 16px"}}>
-          {loading&&<div style={{fontSize:12,color:T.textSub,fontFamily:T.sans,animation:"pulse 1.2s infinite"}}>Running AI analysis on your watchlist…</div>}
-          {recs&&(
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
-              {recs.map((r,i)=>{
-                const st=actionStyle(r.action);
-                return(
-                  <div key={i} style={{background:T.surfaceB,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                      <span style={{fontFamily:T.sans,fontSize:14,fontWeight:700,color:T.text}}>{r.symbol}</span>
-                      <span style={{padding:"3px 8px",borderRadius:6,background:st.bg,color:st.color,fontSize:10,fontWeight:700,textTransform:"uppercase",fontFamily:T.sans}}>{r.action}</span>
-                    </div>
-                    <div style={{fontSize:11,color:T.textSub,lineHeight:1.5,marginBottom:6,fontFamily:T.sans}}>{r.reason}</div>
-                    {r.target&&<div style={{fontSize:10,color:T.accent,fontWeight:600,fontFamily:T.sans}}>Target: {r.target}</div>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {!loading&&!recs&&<div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>AI recommendations will load automatically.</div>}
-        </div>
-      )}
-    </div>
-  );
 }
-
 /* ════════════════════════════════════════════════════
    TICKER SUGGESTIONS & SEARCH DROPDOWN
 ════════════════════════════════════════════════════ */
