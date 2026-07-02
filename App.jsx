@@ -183,20 +183,17 @@ const YF_REV = Object.fromEntries(Object.entries(YF_MAP).map(([k,v])=>[v,k]));
 const toYF   = s => YF_MAP[s]||s;
 const fromYF = s => YF_REV[s]||s;
 
-// Fetch through a CORS proxy — tries two services for reliability
+// Route through our own Vercel serverless proxy — no CORS issues, no rate limits
 async function yfFetch(url){
-  const proxies=[
-    "https://corsproxy.io/?"+encodeURIComponent(url),
-    "https://api.allorigins.win/raw?url="+encodeURIComponent(url),
-  ];
-  for(const p of proxies){
-    try{
-      const r=await fetch(p,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
-      if(!r.ok)continue;
-      const txt=await r.text();
-      if(txt&&txt.length>20)return JSON.parse(txt);
-    }catch{}
-  }
+  try{
+    const r=await fetch("/api/quotes?url="+encodeURIComponent(url),{
+      headers:{Accept:"application/json"},
+      signal:AbortSignal.timeout(10000),
+    });
+    if(!r.ok)return null;
+    const txt=await r.text();
+    if(txt&&txt.length>20)return JSON.parse(txt);
+  }catch{}
   return null;
 }
 
