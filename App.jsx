@@ -178,7 +178,7 @@ function extractPrice(text){
    Uses a CORS proxy since browser can't call YF directly
 ══════════════════════════════════════════════════════ */
 // Some display symbols differ from Yahoo Finance symbols
-// Symbol passthrough — Finnhub uses standard tickers
+// Finnhub uses standard tickers — no symbol mapping needed
 const toYF   = s => s;
 const fromYF = s => s;
 
@@ -202,17 +202,16 @@ async function yfFetch(url){
 // Batch real-time quotes — returns {SYM:{p,pc,name,change,changePct}}
 async function fetchYFQuotes(symbols){
   if(!symbols.length)return{};
-  const yfSyms=symbols.map(toYF).join(",");
-  const url=`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfSyms}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,shortName,regularMarketVolume`;
   try{
-    const data=await yfFetch(url);
-    const quotes=data?.quoteResponse?.result||[];
+    const r=await fetch("/api/quotes?symbols="+encodeURIComponent(symbols.join(",")),{
+      signal:AbortSignal.timeout(12000),
+    });
+    if(!r.ok)return{};
+    const data=await r.json();
+    if(!data||data.error)return{};
     const result={};
-    quotes.forEach(q=>{
-      const sym=fromYF(q.symbol);
-      const p=Number(q.regularMarketPrice)||0;
-      const pc=Number(q.regularMarketPreviousClose)||p;
-      if(p>0) result[sym]={p,pc,name:q.shortName||q.longName||sym,volume:q.regularMarketVolume||0};
+    Object.entries(data).forEach(([sym,q])=>{
+      if(q&&q.p>0)result[sym]={p:q.p,pc:q.pc||q.p,name:q.name||sym};
     });
     return result;
   }catch{return{};}
