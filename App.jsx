@@ -178,19 +178,21 @@ function extractPrice(text){
    Uses a CORS proxy since browser can't call YF directly
 ══════════════════════════════════════════════════════ */
 // Some display symbols differ from Yahoo Finance symbols
-// Finnhub uses standard tickers — no symbol mapping needed
+// Finnhub uses standard tickers — no mapping needed
 const toYF   = s => s;
 const fromYF = s => s;
 
 // Fetch through a CORS proxy — tries two services for reliability
 async function yfFetch(url){
-  const proxies=[
-    "https://corsproxy.io/?"+encodeURIComponent(url),
-    "https://api.allorigins.win/raw?url="+encodeURIComponent(url),
-  ];
-  for(const p of proxies){
+  // Try our server proxy first (most reliable), then CORS proxies as fallback
+  try{
+    const r=await fetch("/api/yf?url="+encodeURIComponent(url),{signal:AbortSignal.timeout(9000)});
+    if(r.ok){const d=await r.json();if(d&&!d.error)return d;}
+  }catch{}
+  // CORS proxy fallbacks
+  for(const p of["https://corsproxy.io/?"+encodeURIComponent(url),"https://api.allorigins.win/raw?url="+encodeURIComponent(url)]){
     try{
-      const r=await fetch(p,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
+      const r=await fetch(p,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(7000)});
       if(!r.ok)continue;
       const txt=await r.text();
       if(txt&&txt.length>20)return JSON.parse(txt);
@@ -1090,7 +1092,79 @@ function YahooRecommendations({stocks,T}){
 /* ════════════════════════════════════════════════════
    RECOMMENDATIONS
 ════════════════════════════════════════════════════ */
-function Recommendations({stocks,T}){
+function Recommendations({stocks,T,refreshKey}){
+  const [recs,setRecs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [open,setOpen]=useState(true);
+  const stockKey=stocks.filter(s=>s.p>0).slice(0,6).map(s=>s.s).join(",");
+
+  const load=useCallback(async()=>{
+    const top=stocks.filter(s=>s.p>0).slice(0,6);
+    if(!top.length){setLoading(false);return;}
+    setLoading(true);setRecs([]);
+    const results=await Promise.all(top.map(async stock=>{
+      const s=await fetchYFSummary(stock.s);
+      if(!s)return null;
+      const fd=s.financialData;
+      if(!fd?.recommendationKey)return null;
+      const rec=fd.recommendationKey;
+      const target=fd.targetMeanPrice?.raw;
+      const targetLow=fd.targetLowPrice?.raw;
+      const targetHigh=fd.targetHighPrice?.raw;
+      const analysts=fd.numberOfAnalystOpinions?.raw;
+      const upside=target&&stock.p?((target-stock.p)/stock.p*100):null;
+      return{symbol:stock.s,price:stock.p,rec,target,targetLow,targetHigh,analysts,upside};
+    }));
+    setRecs(results.filter(Boolean));
+    setLoading(false);
+  },[stockKey,refreshKey]);
+
+  useEffect(()=>{load();},[stockKey,refreshKey]);
+
+  const refresh=()=>load();
+
+  return(
+    <div style={{background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,marginTop:14,overflow:"hidden",boxShadow:T.shadow}}>
+      <div onClick={()=>setOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",cursor:"pointer",borderBottom:open?`1px solid ${T.border}`:"none"}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans}}>📊 Analyst Consensus</div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {!loading&&<button onClick={e=>{e.stopPropagation();refresh();}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,fontFamily:T.sans}}>↻ Refresh</button>}
+          {loading&&<span style={{fontSize:10,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</span>}
+          <span style={{color:T.textSub,fontSize:12}}>{open?"▲":"▼"}</span>
+        </div>
+      </div>
+      {open&&(
+        <div style={{padding:"14px 16px"}}>
+          {recs.length>0?(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
+              {recs.map(r=>{
+                const cfg=REC_CONFIG[r.rec]||{label:"Hold",color:T.ema9};
+                return(
+                  <div key={r.symbol} style={{background:T.surfaceB,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:T.text}}>{r.symbol}</span>
+                      <span style={{padding:"3px 8px",borderRadius:6,background:`${cfg.color}20`,color:cfg.color,fontSize:10,fontWeight:700,fontFamily:T.sans}}>{cfg.label}</span>
+                    </div>
+                    {r.target&&(
+                      <div style={{fontSize:11,fontFamily:T.sans}}>
+                        <span style={{color:T.textSub}}>Target </span>
+                        <span style={{color:T.text,fontWeight:600}}>${r.target.toFixed(2)}</span>
+                        {r.upside!==null&&<span style={{marginLeft:6,color:r.upside>=0?T.up:T.down,fontWeight:600}}>{r.upside>=0?"+":""}{r.upside.toFixed(1)}%</span>}
+                      </div>
+                    )}
+                    {r.analysts&&<div style={{fontSize:10,color:T.textSub,marginTop:3,fontFamily:T.sans}}>{r.analysts} analysts</div>}
+                  </div>
+                );
+              })}
+            </div>
+          ):!loading&&(
+            <div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>No analyst coverage data for current watchlist.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}){
   const [recs,setRecs]=useState(null);
   const [loading,setLoading]=useState(false);
   const [open,setOpen]=useState(true);
@@ -1328,6 +1402,7 @@ export default function StockScreener(){
   const [newTabName,setNewTabName]=useState("");
   const [addingTab,setAddingTab]=useState(false);
   const [refreshing,setRefreshing]=useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [autoRefresh,setAutoRefresh]=useState(false);
   const [lastRefresh,setLastRefresh]=useState(null);
   const autoRef=useRef(null);
@@ -1420,6 +1495,7 @@ export default function StockScreener(){
     }).catch(()=>{});
 
     setLastRefresh(new Date());
+    setRefreshKey(k=>k+1);
     setRefreshing(false);
   },[activeTab]);
 
@@ -1619,7 +1695,7 @@ export default function StockScreener(){
       )}
 
       {/* ── RECOMMENDATIONS ──────────────────────── */}
-      <YahooRecommendations stocks={stocks} T={T}/>
+      <YahooRecommendations stocks={stocks} T={T} refreshKey={refreshKey}/>
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
         Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
