@@ -1,1 +1,1 @@
-# vibecode_tools
+# AI stocks screener tool
