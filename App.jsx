@@ -61,6 +61,94 @@ const KNOWN_EVENTS = {
   ],
 };
 
+
+/* ════════════════════════════════════════════════════
+   PRICE ALERTS
+════════════════════════════════════════════════════ */
+function getAlerts(){try{return JSON.parse(localStorage.getItem("screener_alerts")||"[]");}catch{return[];}}
+function saveAlerts(a){try{localStorage.setItem("screener_alerts",JSON.stringify(a));}catch{}}
+function addAlert(sym,price,cond){const a=getAlerts();a.push({id:Date.now(),symbol:sym,price:Number(price),condition:cond,created:Date.now(),triggered:false});saveAlerts(a);}
+function deleteAlert(id){saveAlerts(getAlerts().filter(a=>a.id!==id));}
+function checkAndFireAlerts(stocks){
+  const alerts=getAlerts();let changed=false;
+  alerts.forEach(a=>{
+    if(a.triggered)return;
+    const s=stocks.find(x=>x.s===a.symbol);
+    if(!s||!s.p)return;
+    const hit=a.condition==="above"?s.p>=a.price:s.p<=a.price;
+    if(hit){a.triggered=true;changed=true;
+      if("Notification"in window&&Notification.permission==="granted"){
+        try{new Notification("🔔 "+a.symbol+" Alert",{body:`${a.symbol} ${a.condition==="above"?"above":"below"} $${a.price.toFixed(2)} — now $${s.p.toFixed(2)}`});}catch{}
+      }
+    }
+  });
+  if(changed)saveAlerts(alerts);
+}
+function AlertModal({symbol,currentPrice,T,onClose}){
+  const [price,setPrice]=React.useState(currentPrice?(currentPrice*1.05).toFixed(2):"");
+  const [cond,setCond]=React.useState("above");
+  const [saved,setSaved]=React.useState(false);
+  const submit=()=>{
+    const p=parseFloat(price);if(!p||p<=0)return;
+    if("Notification"in window&&Notification.permission==="default")Notification.requestPermission();
+    addAlert(symbol,p,cond);setSaved(true);setTimeout(onClose,900);
+  };
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:24,width:300,boxShadow:"0 16px 40px rgba(0,0,0,0.5)"}}>
+        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>🔔 Price Alert — {symbol}</div>
+        <div style={{fontSize:12,color:T.textSub,marginBottom:16,fontFamily:T.sans}}>Current ${currentPrice?.toFixed(2)||"—"}</div>
+        <select value={cond} onChange={e=>setCond(e.target.value)} style={{width:"100%",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:13,marginBottom:10,outline:"none"}}>
+          <option value="above">Notify when price rises ABOVE</option>
+          <option value="below">Notify when price falls BELOW</option>
+        </select>
+        <input type="number" value={price} onChange={e=>setPrice(e.target.value)} placeholder="Target price…"
+          style={{width:"100%",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:16,outline:"none",marginBottom:16}}/>
+        {saved&&<div style={{color:T.up,fontSize:12,textAlign:"center",marginBottom:8}}>✓ Alert saved!</div>}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={submit} style={{flex:1,background:T.accent,color:"#fff",border:"none",borderRadius:8,padding:"9px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Set Alert</button>
+          <button onClick={onClose} style={{padding:"9px 14px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,color:T.textSub,fontSize:12,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function AlertListModal({T,onClose}){
+  const [alerts,setAlerts]=React.useState(getAlerts());
+  const remove=(id)=>{deleteAlert(id);setAlerts(getAlerts());};
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:24,width:320,maxHeight:"70vh",overflowY:"auto"}}>
+        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:16}}>🔔 Price Alerts</div>
+        {alerts.length===0&&<div style={{fontSize:12,color:T.textSub}}>No alerts set. Click 🔕 on any stock card.</div>}
+        {alerts.map(a=>(<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+          <div><span style={{fontFamily:"monospace",fontWeight:700,color:T.text,fontSize:13}}>{a.symbol}</span>
+            <span style={{fontSize:11,color:T.textSub,marginLeft:8}}>{a.condition==="above"?"above":"below"} ${a.price.toFixed(2)}</span>
+            {a.triggered&&<span style={{fontSize:9,color:T.up,marginLeft:6,fontWeight:700}}>FIRED</span>}
+          </div>
+          <button onClick={()=>remove(a.id)} style={{background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,padding:"2px 6px"}}>✕</button>
+        </div>))}
+        <button onClick={onClose} style={{marginTop:16,width:"100%",background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px",color:T.textSub,fontSize:12,cursor:"pointer"}}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   MARKET SESSION DETECTION
+════════════════════════════════════════════════════ */
+function getMarketSession(){
+  const et=new Date(Date.now()+(-4)*3600000+new Date().getTimezoneOffset()*60000);
+  const d=et.getDay(),h=et.getHours(),m=et.getMinutes(),mins=h*60+m;
+  if(d===0||d===6)return"closed";
+  if(mins<4*60)return"closed";
+  if(mins<9*60+30)return"pre";
+  if(mins<16*60)return"open";
+  if(mins<20*60)return"after";
+  return"closed";
+}
+const SESSION_CFG={open:{label:"Market Open",color:"#00D084"},pre:{label:"Pre-Market",color:"#F59E0B"},after:{label:"After Hours",color:"#60A5FA"},closed:{label:"Market Closed",color:"#64748B"}};
+
 /* ════════════════════════════════════════════════════
    THEMES — Yahoo Finance / iOS Finance aesthetic
 ════════════════════════════════════════════════════ */
@@ -632,6 +720,10 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
 /* ════════════════════════════════════════════════════
    LINE CHART
 ════════════════════════════════════════════════════ */
+// Stable signal dot renderers — outside component to prevent reference churn
+const SigBuyDot=({cx,cy,payload})=>{if(!payload?._buy)return null;return(<g><polygon points={`${cx},${cy-9} ${cx+6},${cy} ${cx-6},${cy}`} fill="#00D084" opacity={0.92}><title>Buy: {payload._buyLbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy+12} stroke="#00D084" strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};
+const SigSellDot=({cx,cy,payload})=>{if(!payload?._sell)return null;return(<g><polygon points={`${cx},${cy+9} ${cx+6},${cy} ${cx-6},${cy}`} fill="#FF4560" opacity={0.92}><title>Sell: {payload._sellLbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy-12} stroke="#FF4560" strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};
+
 function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,T,height=200,accent}){
   const [brushS,setBrushS]=useState(0);
   const [brushE,setBrushE]=useState(()=>Math.max(0,data.length-1));
@@ -639,6 +731,11 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
   const dsKey=`${data.length}|${data[0]?.date}`;
   useEffect(()=>{setBrushS(0);setBrushE(Math.max(0,data.length-1));},[dsKey]);// eslint-disable-line
   const isZoomed=brushS>0||brushE<data.length-1;
+  const sigChartData=useMemo(()=>{
+    if(!showSignals||!signals?.length)return{d:data,hasSigs:false};
+    const m={};signals.forEach(s=>{if(!m[s.i])m[s.i]={buy:[],sell:[]};m[s.i][s.dir].push(s);});
+    return{hasSigs:true,d:data.map((row,i)=>({...row,_buy:m[i]?.buy?.length?row.close:null,_buyLbl:m[i]?.buy?.map(s=>s.label).join(" · ")||"",_sell:m[i]?.sell?.length?row.close:null,_sellLbl:m[i]?.sell?.map(s=>s.label).join(" · ")||""}))};
+  },[data,signals,showSignals]);
   const onWheel=useCallback((e)=>{e.preventDefault();const vis=brushE-brushS,dir=e.deltaY>0?1:-1;const amt=Math.max(1,Math.floor(vis*0.12));const rect=divRef.current?.getBoundingClientRect();const ratio=rect?(e.clientX-rect.left)/rect.width:0.5;const dl=Math.round(amt*ratio),dr=amt-dl;const ns=Math.max(0,brushS+dir*dl),ne=Math.min(data.length-1,brushE-dir*dr);if(ne-ns>=4){setBrushS(ns);setBrushE(ne);}},[brushS,brushE,data.length]);
   useEffect(()=>{const el=divRef.current;if(!el)return;el.addEventListener("wheel",onWheel,{passive:false});return()=>el.removeEventListener("wheel",onWheel);},[onWheel]);
   const resetZoom=()=>{setBrushS(0);setBrushE(Math.max(0,data.length-1));};
@@ -649,7 +746,7 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
     <div ref={divRef} style={{position:"relative"}} onDoubleClick={resetZoom}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:4,right:8,zIndex:10,background:"#0F1018",border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>↺ {brushE-brushS+1}/{data.length}</div>}
       <ResponsiveContainer width="100%" height={height+20}>
-        <ComposedChart data={data} margin={{top:6,right:8,left:0,bottom:0}}>
+        <ComposedChart data={showSignals&&sigChartData?.hasSigs?sigChartData.d:data} margin={{top:6,right:8,left:0,bottom:0}}>
           <defs><linearGradient id={`grad-${col.replace("#","")}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={col} stopOpacity={0.15}/><stop offset="95%" stopColor={col} stopOpacity={0}/></linearGradient></defs>
           <CartesianGrid stroke={T.chartGrid} strokeDasharray="2 5" vertical={false}/>
           <XAxis dataKey="date" tick={{fill:T.textSub,fontSize:8}} interval="preserveStartEnd"/>
@@ -660,7 +757,10 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
           {showBB&&<><Line type="monotone" dataKey="bbUpper" stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Upper" connectNulls={false} opacity={0.85}/><Line type="monotone" dataKey="bbMiddle" stroke="#A78BFA" dot={false} strokeWidth={1} name="BB Mid" connectNulls={false} opacity={0.45}/><Line type="monotone" dataKey="bbLower" stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Lower" connectNulls={false} opacity={0.85}/></>}
           {showVWAP&&<Line type="monotone" dataKey="vwap" stroke="#60A5FA" dot={false} strokeWidth={1.8} name="VWAP" connectNulls={false}/>}
           {showSupport&&srLevels&&srLevels.map((z,i)=>(<ReferenceLine key={i} y={z.price} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5 3" strokeWidth={1} opacity={0.45}/>))}
-          {showSignals&&signals&&signals.length>0&&(()=>{const sigMap={};signals.forEach(s=>{if(!sigMap[s.i])sigMap[s.i]={buy:[],sell:[]};sigMap[s.i][s.dir].push(s);});const buyData=data.map((d,i)=>({...d,_sig:sigMap[i]?.buy?.length?d.close:null,_lbl:sigMap[i]?.buy?.map(s=>s.label).join(" · ")||""}));const sellData=data.map((d,i)=>({...d,_sig:sigMap[i]?.sell?.length?d.close:null,_lbl:sigMap[i]?.sell?.map(s=>s.label).join(" · ")||""}));const BD=({cx,cy,payload})=>{if(!payload._sig)return null;return(<g><polygon points={`${cx},${cy-9} ${cx+6},${cy} ${cx-6},${cy}`} fill={T.up} opacity={0.92}><title>Buy: {payload._lbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy+12} stroke={T.up} strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};const SD=({cx,cy,payload})=>{if(!payload._sig)return null;return(<g><polygon points={`${cx},${cy+9} ${cx+6},${cy} ${cx-6},${cy}`} fill={T.down} opacity={0.92}><title>Sell: {payload._lbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy-12} stroke={T.down} strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};return(<><Line data={buyData} dataKey="_sig" stroke="none" dot={<BD/>} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/><Line data={sellData} dataKey="_sig" stroke="none" dot={<SD/>} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/></>);})()}
+          {showSignals&&sigChartData&&sigChartData.hasSigs&&<>
+            <Line data={sigChartData.d} dataKey="_buy"  stroke="none" dot={SigBuyDot}  activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/>
+            <Line data={sigChartData.d} dataKey="_sell" stroke="none" dot={SigSellDot} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/>
+          </>}
           <Brush dataKey="date" height={18} stroke={T.border} fill={T.surfaceB||T.surface} travellerWidth={8} startIndex={brushS} endIndex={brushE} onChange={({startIndex,endIndex})=>{if(startIndex!=null)setBrushS(startIndex);if(endIndex!=null)setBrushE(endIndex);}} tickFormatter={()=>""}/>
         </ComposedChart>
       </ResponsiveContainer>
@@ -720,8 +820,8 @@ function VolumePanel({data,T}){
    CHART CONTROLS
 ════════════════════════════════════════════════════ */
 function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
-  const chip=(active,color,label,onClick)=>(
-    <button onClick={onClick} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${active?color:T.border}`,background:active?`${color}15`:"transparent",color:active?color:T.textSub,fontSize:10,cursor:"pointer",fontWeight:active?600:400,transition:"all 0.12s",whiteSpace:"nowrap",fontFamily:T.sans}}>
+  const chip=(active,color,label,onClick,disabled=false)=>(
+    <button onClick={disabled?undefined:onClick} title={disabled?"Candle mode only":undefined} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${active?color:T.border}`,background:active&&!disabled?`${color}15`:"transparent",color:active&&!disabled?color:T.textSub,fontSize:10,cursor:disabled?"not-allowed":"pointer",fontWeight:active&&!disabled?600:400,transition:"all 0.12s",whiteSpace:"nowrap",fontFamily:T.sans,opacity:disabled?0.35:1}}>
       {label}
     </button>
   );
@@ -756,7 +856,7 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       {chip(ind.bb,        "#A78BFA","BB",        ()=>toggleInd("bb"))}
       {chip(ind.rsi,       T.ema9,  "RSI",       ()=>toggleInd("rsi"))}
       {chip(ind.signals,   "#F43F5E","Signals",   ()=>toggleInd("signals"))}
-      {chip(ind.volProfile,"#F59E0B","VP",        ()=>toggleInd("volProfile"))}
+      {chip(ind.volProfile,"#F59E0B","VP",        ()=>toggleInd("volProfile"),chartMode!=="candle")}
     </div>
   );
 }
@@ -1496,6 +1596,11 @@ export default function StockScreener(){
   const [activeTab,setActiveTab]=useState(()=>{try{return localStorage.getItem("screener_activeTab")||"tech";}catch{return"tech";}});
   const [indices,setIndices]=useState(INDICES);
   const [mktNews,setMktNews]=useState([]);
+  const [alertModal,setAlertModal]=useState(null);
+  const [showAlertList,setShowAlertList]=useState(false);
+  const [session]=useState(getMarketSession);
+  const [showFilters,setShowFilters]=useState(false);
+  const [filters,setFilters]=useState({changeMin:null,changeMax:null});
   const [selectedIdx,setSelectedIdx]=useState(null);
   const [selected,setSelected]=useState(null);
   const [viewMode,setViewMode]=useState(()=>{try{return localStorage.getItem("screener_viewMode")||"grid";}catch{return"grid";}});
@@ -1528,12 +1633,19 @@ export default function StockScreener(){
   },[autoRefresh,activeTab]);
 
   const curTab=tabs.find(t=>t.id===activeTab)||tabs[0];
-  const stocks=useMemo(()=>[...curTab.stocks].sort((a,b)=>{
+  const allStocks=useMemo(()=>[...curTab.stocks].sort((a,b)=>{
     const ca=pct(a.p||0,a.pc||1),cb=pct(b.p||0,b.pc||1);
     if(sort==="change_desc")return cb-ca;
     if(sort==="change_asc") return ca-cb;
     return a.s.localeCompare(b.s);
   }),[curTab,sort]);
+  const stocks=useMemo(()=>allStocks.filter(s=>{
+    if(!s.p||!s.pc)return true;
+    const ch=pct(s.p,s.pc);
+    if(filters.changeMin!=null&&ch<filters.changeMin)return false;
+    if(filters.changeMax!=null&&ch>filters.changeMax)return false;
+    return true;
+  }),[allStocks,filters]);
 
   const allSymbols=useMemo(()=>[...new Set(tabs.flatMap(t=>t.stocks.map(s=>s.s)))]   ,[tabs]);
 
@@ -1607,6 +1719,7 @@ export default function StockScreener(){
       }
     }).catch(()=>{});
 
+    checkAndFireAlerts(curTab.stocks);
     setLastRefresh(new Date());
     setRefreshKey(k=>k+1);
     setRefreshing(false);
@@ -1685,12 +1798,22 @@ export default function StockScreener(){
 
   const StockList=(
     <div style={{maxHeight:isMobile?"none":"52vh",overflowY:"auto"}}>
+      {showFilters&&(
+        <div style={{display:"flex",gap:6,padding:"10px 12px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginRight:4}}>Filter by change</span>
+          {[["▲>2%",2],["▲>5%",5],["▲>10%",10]].map(([lbl,v])=>{const on=filters.changeMin===v;return<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMin:v,changeMax:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.up:T.border}`,background:on?`${T.up}18`:"transparent",color:on?T.up:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>;})}
+          {[["▼>2%",-2],["▼>5%",-5],["▼>10%",-10]].map(([lbl,v])=>{const on=filters.changeMax===v;return<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMax:v,changeMin:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.down:T.border}`,background:on?`${T.down}18`:"transparent",color:on?T.down:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>;})}
+          <button onClick={()=>setFilters({changeMin:null,changeMax:null})} style={{marginLeft:"auto",fontSize:10,color:T.textSub,background:"none",border:"none",cursor:"pointer"}}>✕ Clear</button>
+          <span style={{fontSize:10,color:T.textSub}}>{stocks.length}/{allStocks.length} shown</span>
+        </div>
+      )}
       {viewMode==="grid"
         ?<div style={{display:"grid",gridTemplateColumns:selected&&!isMobile?"1fr":"repeat(auto-fill,minmax(155px,1fr))",gap:10}}>
            {stocks.map(st=>(
              <GridCard key={st.s} stock={st} selected={selected?.s===st.s}
                onClick={()=>setSelected(s=>s?.s===st.s?null:st)}
-               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing}/>
+               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing}
+               onSetAlert={()=>setAlertModal({symbol:st.s,price:st.p})}/>
            ))}
          </div>
         :<div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:T.shadow}}>
@@ -1718,7 +1841,10 @@ export default function StockScreener(){
       {/* ── HEADER ────────────────────────────── */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
         <div>
-          <div style={{fontSize:isMobile?16:20,fontWeight:700,color:T.text,letterSpacing:"-0.02em"}}>AI Market Screener</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <div style={{fontSize:isMobile?16:20,fontWeight:700,color:T.text,letterSpacing:"-0.02em"}}>AI Market Screener</div>
+            {!isMobile&&session&&<span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:10,background:`${SESSION_CFG[session]?.color}20`,color:SESSION_CFG[session]?.color,letterSpacing:".07em",textTransform:"uppercase"}}>{SESSION_CFG[session]?.label}</span>}
+          </div>
           {!isMobile&&<div style={{fontSize:11,color:T.textSub,marginTop:2}}>AI-powered · Tap any index to view chart</div>}
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -1726,6 +1852,8 @@ export default function StockScreener(){
           <button onClick={()=>setAutoRefresh(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${autoRefresh?T.up:T.border}`,background:autoRefresh?T.upBg:"transparent",color:autoRefresh?T.up:T.textSub,fontSize:11,cursor:"pointer",fontWeight:autoRefresh?600:400}}>
             {autoRefresh?"⏱ Auto ON":"⏱ Auto"}
           </button>
+          <button onClick={()=>setShowAlertList(true)} title="View Alerts" style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:14,cursor:"pointer"}}>🔔</button>
+          <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${showFilters?T.accent:T.border}`,background:showFilters?`${T.accent}15`:T.surface,color:showFilters?T.accent:T.textSub,fontSize:11,cursor:"pointer",fontWeight:showFilters?700:400}}>Filter{filters.changeMin||filters.changeMax?" ✓":""}</button>
           <button onClick={()=>runRefresh(curTab.stocks)} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
             <span style={refreshing?{animation:"pulse 1s infinite",display:"inline-block"}:{}}>{refreshing?"↻ Refreshing…":"↻ Refresh"}</span>
           </button>
@@ -1813,6 +1941,9 @@ export default function StockScreener(){
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
         Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
       </div>
+
+      {alertModal&&<AlertModal symbol={alertModal.symbol} currentPrice={alertModal.price} T={T} onClose={()=>setAlertModal(null)}/>}
+      {showAlertList&&<AlertListModal T={T} onClose={()=>setShowAlertList(false)}/>}
     </div>
   );
 }
