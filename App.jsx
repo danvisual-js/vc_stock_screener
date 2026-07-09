@@ -134,18 +134,11 @@ function enrich(data){
   const sr=calcEMA(mac.filter(v=>v!=null),9);let si=0;
   const sig=mac.map(v=>v!=null?(sr[si++]??null):null);
   const his=mac.map((v,i)=>v!=null&&sig[i]!=null?+(v-sig[i]).toFixed(4):null);
-  // Phase 1A — new indicators
   const vwap=calcVWAP(data);
   const bb=calcBollinger(cl);
   const rsi14=calcRSI(cl);
-  return data.map((d,i)=>({
-    ...d,
-    ema9:e9[i],ema20:e20[i],ema50:e50[i],
-    macd:mac[i],signal:sig[i],histogram:his[i],
-    vwap:vwap[i],
-    bbUpper:bb.upper[i],bbMiddle:bb.middle[i],bbLower:bb.lower[i],
-    rsi:rsi14[i],
-  }));
+  return data.map((d,i)=>({...d,ema9:e9[i],ema20:e20[i],ema50:e50[i],macd:mac[i],signal:sig[i],histogram:his[i],
+    vwap:vwap[i],bbUpper:bb.upper[i],bbMiddle:bb.middle[i],bbLower:bb.lower[i],rsi:rsi14[i]}));
 }
 function findSR(data,lb=10){
   const z=[];
@@ -158,120 +151,65 @@ function findSR(data,lb=10){
   return z.reduce((a,x)=>(!a.some(y=>Math.abs(y.price-x.price)/x.price<0.015)&&a.push(x),a),[]).slice(0,5);
 }
 
-/* ════════════════════════════════════════════════════
-   PHASE 1A INDICATORS — VWAP · Bollinger Bands · RSI
-════════════════════════════════════════════════════ */
-
-// VWAP: Cumulative (H+L+C)/3×Vol / CumVol. Resets at start of data (intraday) or per bar (daily).
+/* ══════════════════════════════════════════════════
+   PHASE 1A — VWAP · Bollinger Bands · RSI
+══════════════════════════════════════════════════ */
 function calcVWAP(data){
   const isIntra=data.length>0&&String(data[0].date).includes(":");
-  if(isIntra){
-    // Single-session cumulative VWAP
-    let cumPV=0,cumV=0;
-    return data.map(d=>{
-      const tp=(d.high+d.low+d.close)/3;
-      const vol=d.volume||1;
-      cumPV+=tp*vol; cumV+=vol;
-      return cumV?+(cumPV/cumV).toFixed(4):null;
-    });
-  }else{
-    // Daily chart: typical price per bar (single-bar VWAP)
-    return data.map(d=>+((d.high+d.low+d.close)/3).toFixed(4));
+  if(isIntra){let cv=0,cV=0;return data.map(d=>{const tp=(d.high+d.low+d.close)/3,v=d.volume||1;cv+=tp*v;cV+=v;return cV?+(cv/cV).toFixed(4):null;});}
+  return data.map(d=>+((d.high+d.low+d.close)/3).toFixed(4));
+}
+function calcBollinger(cl,p=20,m=2){
+  const up=[],mid=[],lo=[];
+  for(let i=0;i<cl.length;i++){
+    if(i<p-1){up.push(null);mid.push(null);lo.push(null);continue;}
+    const sl=cl.slice(i-p+1,i+1),sma=sl.reduce((a,b)=>a+b,0)/p;
+    const std=Math.sqrt(sl.reduce((a,b)=>a+(b-sma)**2,0)/p);
+    mid.push(+sma.toFixed(4));up.push(+(sma+m*std).toFixed(4));lo.push(+(sma-m*std).toFixed(4));
   }
+  return{upper:up,middle:mid,lower:lo};
+}
+function calcRSI(cl,p=14){
+  const r=new Array(cl.length).fill(null);
+  if(cl.length<p+1)return r;
+  let ag=0,al=0;
+  for(let i=1;i<=p;i++){const c=cl[i]-cl[i-1];if(c>0)ag+=c;else al+=Math.abs(c);}
+  ag/=p;al/=p;
+  r[p]=al===0?100:+(100-100/(1+ag/al)).toFixed(2);
+  for(let i=p+1;i<cl.length;i++){const c=cl[i]-cl[i-1];ag=(ag*(p-1)+(c>0?c:0))/p;al=(al*(p-1)+(c<0?Math.abs(c):0))/p;r[i]=al===0?100:+(100-100/(1+ag/al)).toFixed(2);}
+  return r;
 }
 
-// Bollinger Bands: 20-period SMA ± (mult × σ)
-function calcBollinger(closes,period=20,mult=2){
-  const upper=[],middle=[],lower=[];
-  for(let i=0;i<closes.length;i++){
-    if(i<period-1){upper.push(null);middle.push(null);lower.push(null);continue;}
-    const sl=closes.slice(i-period+1,i+1);
-    const sma=sl.reduce((a,b)=>a+b,0)/period;
-    const std=Math.sqrt(sl.reduce((a,b)=>a+(b-sma)**2,0)/period);
-    middle.push(+sma.toFixed(4));
-    upper.push(+(sma+mult*std).toFixed(4));
-    lower.push(+(sma-mult*std).toFixed(4));
-  }
-  return{upper,middle,lower};
-}
-
-// RSI (14): Wilder's smoothed method
-function calcRSI(closes,period=14){
-  const result=new Array(closes.length).fill(null);
-  if(closes.length<period+1)return result;
-  let avgGain=0,avgLoss=0;
-  for(let i=1;i<=period;i++){
-    const c=closes[i]-closes[i-1];
-    if(c>0)avgGain+=c; else avgLoss+=Math.abs(c);
-  }
-  avgGain/=period; avgLoss/=period;
-  result[period]=avgLoss===0?100:+(100-100/(1+avgGain/avgLoss)).toFixed(2);
-  for(let i=period+1;i<closes.length;i++){
-    const c=closes[i]-closes[i-1];
-    avgGain=(avgGain*(period-1)+(c>0?c:0))/period;
-    avgLoss=(avgLoss*(period-1)+(c<0?Math.abs(c):0))/period;
-    result[i]=avgLoss===0?100:+(100-100/(1+avgGain/avgLoss)).toFixed(2);
-  }
-  return result;
-}
-
-
-/* ════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════════
    PHASE 1B — BUY / SELL SIGNAL DETECTION
-   Returns [{i, dir:'buy'|'sell', type, label}]
-════════════════════════════════════════════════════ */
+══════════════════════════════════════════════════ */
 function detectSignals(data){
-  const sigs=[];
+  const s=[];
   for(let i=1;i<data.length;i++){
     const p=data[i-1],c=data[i];
-
-    // ─ EMA 9/20 crossover ────────────────────────────
     if(p.ema9!=null&&p.ema20!=null&&c.ema9!=null&&c.ema20!=null){
-      if(p.ema9<=p.ema20&&c.ema9>c.ema20)
-        sigs.push({i,dir:"buy", type:"EMA",label:"EMA 9×20 Cross ↑"});
-      else if(p.ema9>=p.ema20&&c.ema9<c.ema20)
-        sigs.push({i,dir:"sell",type:"EMA",label:"EMA 9×20 Cross ↓"});
+      if(p.ema9<=p.ema20&&c.ema9>c.ema20)s.push({i,dir:"buy", type:"EMA",label:"EMA 9×20 ↑"});
+      else if(p.ema9>=p.ema20&&c.ema9<c.ema20)s.push({i,dir:"sell",type:"EMA",label:"EMA 9×20 ↓"});
     }
-
-    // ─ MACD signal line crossover ─────────────────────
     if(p.macd!=null&&p.signal!=null&&c.macd!=null&&c.signal!=null){
-      if(p.macd<=p.signal&&c.macd>c.signal)
-        sigs.push({i,dir:"buy", type:"MACD",label:"MACD Bull Cross"});
-      else if(p.macd>=p.signal&&c.macd<c.signal)
-        sigs.push({i,dir:"sell",type:"MACD",label:"MACD Bear Cross"});
+      if(p.macd<=p.signal&&c.macd>c.signal)s.push({i,dir:"buy", type:"MACD",label:"MACD Bull Cross"});
+      else if(p.macd>=p.signal&&c.macd<c.signal)s.push({i,dir:"sell",type:"MACD",label:"MACD Bear Cross"});
     }
-
-    // ─ RSI exit oversold / overbought ─────────────────
     if(p.rsi!=null&&c.rsi!=null){
-      if(p.rsi<=30&&c.rsi>30)
-        sigs.push({i,dir:"buy", type:"RSI",label:"RSI Exit Oversold"});
-      if(p.rsi>=70&&c.rsi<70)
-        sigs.push({i,dir:"sell",type:"RSI",label:"RSI Exit Overbought"});
+      if(p.rsi<=30&&c.rsi>30)s.push({i,dir:"buy", type:"RSI",label:"RSI Exit Oversold"});
+      if(p.rsi>=70&&c.rsi<70)s.push({i,dir:"sell",type:"RSI",label:"RSI Exit Overbought"});
     }
-
-    // ─ Price × VWAP crossover ─────────────────────────
     if(p.vwap!=null&&c.vwap!=null){
-      if(p.close<=p.vwap&&c.close>c.vwap)
-        sigs.push({i,dir:"buy", type:"VWAP",label:"Price × VWAP ↑"});
-      else if(p.close>=p.vwap&&c.close<c.vwap)
-        sigs.push({i,dir:"sell",type:"VWAP",label:"Price × VWAP ↓"});
+      if(p.close<=p.vwap&&c.close>c.vwap)s.push({i,dir:"buy", type:"VWAP",label:"Price × VWAP ↑"});
+      else if(p.close>=p.vwap&&c.close<c.vwap)s.push({i,dir:"sell",type:"VWAP",label:"Price × VWAP ↓"});
     }
-
-    // ─ Bollinger Band bounce ──────────────────────────
-    if(p.bbLower!=null&&c.bbLower!=null){
-      if(p.close<=p.bbLower&&c.close>c.bbLower)
-        sigs.push({i,dir:"buy", type:"BB",label:"BB Lower Bounce"});
-    }
-    if(p.bbUpper!=null&&c.bbUpper!=null){
-      if(p.close>=p.bbUpper&&c.close<c.bbUpper)
-        sigs.push({i,dir:"sell",type:"BB",label:"BB Upper Reject"});
-    }
+    if(p.bbLower!=null&&c.bbLower!=null&&p.close<=p.bbLower&&c.close>c.bbLower)
+      s.push({i,dir:"buy", type:"BB",label:"BB Lower Bounce"});
+    if(p.bbUpper!=null&&c.bbUpper!=null&&p.close>=p.bbUpper&&c.close<c.bbUpper)
+      s.push({i,dir:"sell",type:"BB",label:"BB Upper Reject"});
   }
-  return sigs;
+  return s;
 }
-
-// Signal type colour map
-const SIG_TYPE_COLOR={EMA:"#A78BFA",MACD:"#60A5FA",RSI:"#F59E0B",VWAP:"#00D4AA",BB:"#FB923C"};
 
 async function callClaude(userMsg,system){
   const body={model:"claude-sonnet-4-6",max_tokens:1000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:userMsg}]};
@@ -450,16 +388,32 @@ p = current/last trade price, pc = previous session close.`
 const MONTHS={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
 function parseDate(str){const[mon,day]=(str||"").split(" ");return new Date(2026,MONTHS[mon]??6,parseInt(day)||1);}
 
-// Yahoo Finance analyst summary (financialData, keyStats, upgrades)
+// Yahoo Finance analyst summary (kept as fallback)
 async function fetchYFSummary(symbol){
   const url=`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${toYF(symbol)}?modules=financialData,defaultKeyStatistics,upgradesDowngradesHistory`;
   try{const d=await yfFetch(url);return d?.quoteSummary?.result?.[0]||null;}catch{return null;}
 }
 
-// Yahoo Finance news search
+// Finnhub analyst consensus + price targets (primary — no auth needed)
+async function fetchAnalystData(symbol){
+  try{
+    const r=await fetch(`/api/analyst?symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(8000)});
+    if(!r.ok)return null;
+    return await r.json();
+  }catch{return null;}
+}
+
+// Finnhub news via server proxy
 async function fetchYFNews(query,count=6){
-  const url=`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=${count}&enableFuzzyQuery=false`;
-  try{const d=await yfFetch(url);return d?.news||[];}catch{return[];}
+  try{
+    // If query looks like a ticker symbol use company-news; otherwise general market news
+    const isSymbol=/^[A-Z]{1,5}$/.test(query.trim());
+    const url=isSymbol?`/api/news?symbol=${encodeURIComponent(query)}`:`/api/news`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    if(!r.ok)return[];
+    const d=await r.json();
+    return Array.isArray(d)?d.slice(0,count):[];
+  }catch{return[];}
 }
 
 // Simple keyword-based sentiment for news headlines
@@ -523,7 +477,9 @@ const TIMEFRAMES={
   "1m": {barMin:1,   n:390, group:"Intraday"},
   "5m": {barMin:5,   n:78,  group:"Intraday"},
   "15m":{barMin:15,  n:26,  group:"Intraday"},
+  "30m":{barMin:30,  n:13,  group:"Intraday"},
   "1h": {barMin:60,  n:7,   group:"Intraday"},
+  "4h": {barMin:240, n:7,   group:"Intraday"},
   "1W": {barMin:1440,n:5,   group:"History"},
   "1M": {barMin:1440,n:30,  group:"History"},
   "3M": {barMin:1440,n:90,  group:"History"},
@@ -596,24 +552,38 @@ function Sparkline({price,changePct,T,w=80,h=28}){
 }
 
 
-function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,T}){
-  /* ── Zoom / Pan ─────────────────────────────────────── */
+
+// Volume profile — groups bars into price buckets, returns histogram
+function buildVolumeProfile(data, buckets=30){
+  if(!data.length)return[];
+  const prices=data.flatMap(d=>[d.high,d.low]);
+  const minP=Math.min(...prices),maxP=Math.max(...prices),rng=maxP-minP||1;
+  const bktSz=rng/buckets;
+  const profile=Array.from({length:buckets},(_,i)=>({
+    priceMid:minP+(i+0.5)*bktSz,priceMin:minP+i*bktSz,priceMax:minP+(i+1)*bktSz,
+    volUp:0,volDn:0,vol:0,
+  }));
+  data.forEach(bar=>{
+    const mid=(bar.high+bar.low)/2;
+    const idx=Math.min(Math.floor((mid-minP)/bktSz),buckets-1);
+    const v=bar.volume||0;
+    profile[idx].vol+=v;
+    if(bar.isGreen)profile[idx].volUp+=v;else profile[idx].volDn+=v;
+  });
+  return profile;
+}
+
+function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,T}){
   const [vS,setVS]=useState(0);
   const [vE,setVE]=useState(()=>data.length);
   const drag=useRef({on:false,x0:0,s0:0,e0:0});
   const divRef=useRef(null);
-  // Reset viewport when dataset changes (new ticker / timeframe)
   const dsKey=`${data.length}|${data[0]?.date}|${data.at?.(-1)?.date}`;
-  const prevKey=useRef(dsKey);
-  if(prevKey.current!==dsKey){prevKey.current=dsKey;Promise.resolve().then(()=>{setVS(0);setVE(data.length);});}
   useEffect(()=>{setVS(0);setVE(data.length);},[dsKey]);// eslint-disable-line
-
   const vStart=Math.max(0,Math.min(vS,data.length-5));
-  const vEnd  =Math.max(vStart+5,Math.min(vE,data.length));
+  const vEnd=Math.max(vStart+5,Math.min(vE,data.length));
   const visData=data.slice(vStart,vEnd);
   const isZoomed=vStart>0||vEnd<data.length;
-
-  // Wheel zoom — zoom toward cursor position
   const onWheel=useCallback((e)=>{
     e.preventDefault();
     const vis=vEnd-vStart,dir=e.deltaY>0?1:-1;
@@ -621,32 +591,14 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
     const rect=divRef.current?.getBoundingClientRect();
     const ratio=rect?(e.clientX-rect.left)/rect.width:0.5;
     const dl=Math.round(amt*ratio),dr=amt-dl;
-    const ns=Math.max(0,vStart+dir*dl);
-    const ne=Math.min(data.length,vEnd-dir*dr);
+    const ns=Math.max(0,vStart+dir*dl),ne=Math.min(data.length,vEnd-dir*dr);
     if(ne-ns>=5){setVS(ns);setVE(ne);}
   },[vStart,vEnd,data.length]);
-  useEffect(()=>{
-    const el=divRef.current;
-    if(!el)return;
-    el.addEventListener("wheel",onWheel,{passive:false});
-    return()=>el.removeEventListener("wheel",onWheel);
-  },[onWheel]);
-
-  // Drag pan
+  useEffect(()=>{const el=divRef.current;if(!el)return;el.addEventListener("wheel",onWheel,{passive:false});return()=>el.removeEventListener("wheel",onWheel);},[onWheel]);
   const onMD=(e)=>{if(e.button!==0)return;drag.current={on:true,x0:e.clientX,s0:vStart,e0:vEnd};e.currentTarget.style.cursor="grabbing";};
-  const onMM=(e)=>{
-    if(!drag.current.on)return;
-    const rect=divRef.current?.getBoundingClientRect();if(!rect)return;
-    const vis=drag.current.e0-drag.current.s0;
-    const sh=Math.round((drag.current.x0-e.clientX)/(rect.width/vis));
-    const ns=Math.max(0,drag.current.s0+sh);
-    const ne=Math.min(data.length,drag.current.e0+sh);
-    if(ne-ns===vis){setVS(ns);setVE(ne);}
-  };
+  const onMM=(e)=>{if(!drag.current.on)return;const rect=divRef.current?.getBoundingClientRect();if(!rect)return;const vis=drag.current.e0-drag.current.s0;const sh=Math.round((drag.current.x0-e.clientX)/(rect.width/vis));const ns=Math.max(0,drag.current.s0+sh);const ne=Math.min(data.length,drag.current.e0+sh);if(ne-ns===vis){setVS(ns);setVE(ne);}};
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
-
-  /* ── Chart geometry ────────────────────────────────── */
   const VW=900,VH=210,Pad={t:8,r:44,b:22,l:54};
   const W=VW-Pad.l-Pad.r,H=VH-Pad.t-Pad.b;
   if(!visData.length)return null;
@@ -658,76 +610,19 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const step=Math.max(1,Math.round(visData.length/7));
   const yTicks=Array.from({length:4},(_,i)=>minP+(rng/3)*i);
   const fY=p=>p>=10000?(p/1000).toFixed(0)+"K":p>=100?p.toFixed(0):p<1?p.toFixed(3):p.toFixed(2);
-  const eLine=(key,color,dash,w=1.2)=>{
-    let seg=[],segs=[];
-    visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});
-    if(seg.length)segs.push(seg.join(" "));
-    return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);
-  };
-
+  const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
   return(
-    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}}
-      onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={onMU} onDoubleClick={resetZoom}>
-      {/* Zoom indicator — shows visible/total, click to reset */}
-      {isZoomed&&(
-        <div onClick={resetZoom} title="Double-click chart or click here to reset zoom"
-          style={{position:"absolute",top:6,right:50,zIndex:10,background:"var(--surface,#0F1018)",
-            border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",
-            fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>
-          ↺ {visData.length}/{data.length}
-        </div>
-      )}
+    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}} onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={onMU} onDoubleClick={resetZoom}>
+      {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:"#0F1018",border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
-        {/* Y grid + labels */}
-        {yTicks.map((p,i)=>(
-          <g key={i}>
-            <line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/>
-            <text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text>
-          </g>
-        ))}
-        {/* S/R levels */}
-        {showSupport&&srLevels.map((z,i)=>(
-          <g key={i}>
-            <line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/>
-            <text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text>
-          </g>
-        ))}
-        {/* Candles */}
-        {visData.map((d,i)=>{
-          const color=d.isGreen?T.up:T.down;
-          const bT=sy(Math.max(d.open,d.close)),bB=sy(Math.min(d.open,d.close));
-          return(<g key={i}><line x1={sx(i)} x2={sx(i)} y1={sy(d.high)} y2={sy(d.low)} stroke={color} strokeWidth={0.8} opacity={0.55}/><rect x={sx(i)-cw/2} y={bT} width={cw} height={Math.max(bB-bT,1)} fill={color} fillOpacity={d.isGreen?0.2:0.45} stroke={color} strokeWidth={0.8}/></g>);
-        })}
-        {/* EMA */}
+        {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
+        {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
+        {visData.map((d,i)=>{const color=d.isGreen?T.up:T.down;const bT=sy(Math.max(d.open,d.close)),bB=sy(Math.min(d.open,d.close));return(<g key={i}><line x1={sx(i)} x2={sx(i)} y1={sy(d.high)} y2={sy(d.low)} stroke={color} strokeWidth={0.8} opacity={0.55}/><rect x={sx(i)-cw/2} y={bT} width={cw} height={Math.max(bB-bT,1)} fill={color} fillOpacity={d.isGreen?0.2:0.45} stroke={color} strokeWidth={0.8}/></g>);})}
         {showEMA&&<>{eLine("ema9",T.ema9,"4,3")}{eLine("ema20",T.ema20,"")}{eLine("ema50",T.ema50,"")}</>}
-        {/* Bollinger Bands */}
-        {showBB&&(()=>{
-          const pts=(k)=>visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean);
-          const upPts=pts("bbUpper"),loPts=pts("bbLower");
-          if(!upPts.length)return null;
-          return(<g>
-            <path d={`M${upPts.join(" L")} L${loPts.slice().reverse().join(" L")} Z`} fill="#A78BFA" fillOpacity={0.07}/>
-            {[["bbUpper","#A78BFA","3,2"],["bbMiddle","#A78BFA50",""],["bbLower","#A78BFA","3,2"]].map(([k,c,dash])=>(
-              <polyline key={k} points={visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean).join(" ")} fill="none" stroke={c} strokeWidth={1} strokeDasharray={dash} opacity={0.9}/>
-            ))}
-          </g>);
-        })()}
-        {/* VWAP */}
+        {showBB&&(()=>{const pts=(k)=>visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean);const up=pts("bbUpper"),lo=pts("bbLower");if(!up.length)return null;return(<g><path d={`M${up.join(" L")} L${lo.slice().reverse().join(" L")} Z`} fill="#A78BFA" fillOpacity={0.07}/>{[["bbUpper","#A78BFA","3,2"],["bbMiddle","#A78BFA50",""],["bbLower","#A78BFA","3,2"]].map(([k,c,dash])=>(<polyline key={k} points={visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean).join(" ")} fill="none" stroke={c} strokeWidth={1} strokeDasharray={dash} opacity={0.9}/>))}</g>);})()}
         {showVWAP&&<>{eLine("vwap","#60A5FA","",1.5)}</>}
-        {/* Signals — shift indices by vStart */}
-        {showSignals&&signals&&signals.map((sig,idx)=>{
-          const vi=sig.i-vStart;
-          if(vi<0||vi>=visData.length)return null;
-          const bar=visData[vi];const cx=sx(vi);
-          const isBuy=sig.dir==="buy";
-          const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);
-          const sz=5,gap=10;
-          const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);
-          const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;
-          const fill=isBuy?T.up:T.down;
-          return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);
-        })}
-        {/* X axis dates */}
+        {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
+        {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
         {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
       </svg>
     </div>
@@ -738,101 +633,35 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
    LINE CHART
 ════════════════════════════════════════════════════ */
 function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,T,height=200,accent}){
-  /* ── Zoom / Pan via Brush ────────────────────────── */
   const [brushS,setBrushS]=useState(0);
   const [brushE,setBrushE]=useState(()=>Math.max(0,data.length-1));
   const divRef=useRef(null);
   const dsKey=`${data.length}|${data[0]?.date}`;
   useEffect(()=>{setBrushS(0);setBrushE(Math.max(0,data.length-1));},[dsKey]);// eslint-disable-line
-
   const isZoomed=brushS>0||brushE<data.length-1;
-
-  const onWheel=useCallback((e)=>{
-    e.preventDefault();
-    const vis=brushE-brushS,dir=e.deltaY>0?1:-1;
-    const amt=Math.max(1,Math.floor(vis*0.12));
-    const rect=divRef.current?.getBoundingClientRect();
-    const ratio=rect?(e.clientX-rect.left)/rect.width:0.5;
-    const dl=Math.round(amt*ratio),dr=amt-dl;
-    const ns=Math.max(0,brushS+dir*dl);
-    const ne=Math.min(data.length-1,brushE-dir*dr);
-    if(ne-ns>=4){setBrushS(ns);setBrushE(ne);}
-  },[brushS,brushE,data.length]);
-  useEffect(()=>{
-    const el=divRef.current;if(!el)return;
-    el.addEventListener("wheel",onWheel,{passive:false});
-    return()=>el.removeEventListener("wheel",onWheel);
-  },[onWheel]);
-
+  const onWheel=useCallback((e)=>{e.preventDefault();const vis=brushE-brushS,dir=e.deltaY>0?1:-1;const amt=Math.max(1,Math.floor(vis*0.12));const rect=divRef.current?.getBoundingClientRect();const ratio=rect?(e.clientX-rect.left)/rect.width:0.5;const dl=Math.round(amt*ratio),dr=amt-dl;const ns=Math.max(0,brushS+dir*dl),ne=Math.min(data.length-1,brushE-dir*dr);if(ne-ns>=4){setBrushS(ns);setBrushE(ne);}},[brushS,brushE,data.length]);
+  useEffect(()=>{const el=divRef.current;if(!el)return;el.addEventListener("wheel",onWheel,{passive:false});return()=>el.removeEventListener("wheel",onWheel);},[onWheel]);
   const resetZoom=()=>{setBrushS(0);setBrushE(Math.max(0,data.length-1));};
-
   const col=accent||T.accent;
-  const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,fontSize:11,boxShadow:T.shadow},labelStyle:{color:T.textSub},itemStyle:{color:T.text}};
+  const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,fontSize:11},labelStyle:{color:T.textSub},itemStyle:{color:T.text}};
   const fY=v=>v>=10000?(v/1000).toFixed(0)+"K":v>=100?v.toFixed(0):v.toFixed(2);
-
   return(
     <div ref={divRef} style={{position:"relative"}} onDoubleClick={resetZoom}>
-      {/* Zoom indicator */}
-      {isZoomed&&(
-        <div onClick={resetZoom} title="Double-click chart or click here to reset"
-          style={{position:"absolute",top:4,right:8,zIndex:10,background:"var(--surface,#0F1018)",
-            border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",
-            fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>
-          ↺ {brushE-brushS+1}/{data.length}
-        </div>
-      )}
+      {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:4,right:8,zIndex:10,background:"#0F1018",border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>↺ {brushE-brushS+1}/{data.length}</div>}
       <ResponsiveContainer width="100%" height={height+20}>
         <ComposedChart data={data} margin={{top:6,right:8,left:0,bottom:0}}>
-          <defs>
-            <linearGradient id={`grad-${col.replace("#","")}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor={col} stopOpacity={0.15}/>
-              <stop offset="95%" stopColor={col} stopOpacity={0}/>
-            </linearGradient>
-          </defs>
+          <defs><linearGradient id={`grad-${col.replace("#","")}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={col} stopOpacity={0.15}/><stop offset="95%" stopColor={col} stopOpacity={0}/></linearGradient></defs>
           <CartesianGrid stroke={T.chartGrid} strokeDasharray="2 5" vertical={false}/>
           <XAxis dataKey="date" tick={{fill:T.textSub,fontSize:8}} interval="preserveStartEnd"/>
           <YAxis domain={["auto","auto"]} tick={{fill:T.textSub,fontSize:8}} width={44} tickFormatter={fY}/>
           <Tooltip {...tt}/>
           <Area type="monotone" dataKey="close" stroke={col} fill={`url(#grad-${col.replace("#","")})`} strokeWidth={2} dot={false} name="Price"/>
-          {showEMA&&<>
-            <Line type="monotone" dataKey="ema9"  stroke={T.ema9}  dot={false} strokeWidth={1} strokeDasharray="4 2" name="EMA 9"  connectNulls={false}/>
-            <Line type="monotone" dataKey="ema20" stroke={T.ema20} dot={false} strokeWidth={1} name="EMA 20" connectNulls={false}/>
-            <Line type="monotone" dataKey="ema50" stroke={T.ema50} dot={false} strokeWidth={1.5} name="EMA 50" connectNulls={false}/>
-          </>}
-          {showBB&&<>
-            <Line type="monotone" dataKey="bbUpper"  stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Upper" connectNulls={false} opacity={0.85}/>
-            <Line type="monotone" dataKey="bbMiddle" stroke="#A78BFA" dot={false} strokeWidth={1} name="BB Mid" connectNulls={false} opacity={0.45}/>
-            <Line type="monotone" dataKey="bbLower"  stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Lower" connectNulls={false} opacity={0.85}/>
-          </>}
+          {showEMA&&<><Line type="monotone" dataKey="ema9" stroke={T.ema9} dot={false} strokeWidth={1} strokeDasharray="4 2" name="EMA 9" connectNulls={false}/><Line type="monotone" dataKey="ema20" stroke={T.ema20} dot={false} strokeWidth={1} name="EMA 20" connectNulls={false}/><Line type="monotone" dataKey="ema50" stroke={T.ema50} dot={false} strokeWidth={1.5} name="EMA 50" connectNulls={false}/></>}
+          {showBB&&<><Line type="monotone" dataKey="bbUpper" stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Upper" connectNulls={false} opacity={0.85}/><Line type="monotone" dataKey="bbMiddle" stroke="#A78BFA" dot={false} strokeWidth={1} name="BB Mid" connectNulls={false} opacity={0.45}/><Line type="monotone" dataKey="bbLower" stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Lower" connectNulls={false} opacity={0.85}/></>}
           {showVWAP&&<Line type="monotone" dataKey="vwap" stroke="#60A5FA" dot={false} strokeWidth={1.8} name="VWAP" connectNulls={false}/>}
-          {showSupport&&srLevels&&srLevels.map((z,i)=>(
-            <ReferenceLine key={i} y={z.price} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5 3" strokeWidth={1} opacity={0.45}/>
-          ))}
-          {/* Signal dots */}
-          {showSignals&&signals&&signals.length>0&&(()=>{
-            const sigMap={};
-            signals.forEach(s=>{if(!sigMap[s.i])sigMap[s.i]={buy:[],sell:[]};sigMap[s.i][s.dir].push(s);});
-            const buyData=data.map((d,i)=>({...d,_sig:sigMap[i]?.buy?.length?d.close:null,_lbl:sigMap[i]?.buy?.map(s=>s.label).join(" · ")||""}));
-            const sellData=data.map((d,i)=>({...d,_sig:sigMap[i]?.sell?.length?d.close:null,_lbl:sigMap[i]?.sell?.map(s=>s.label).join(" · ")||""}));
-            const BuyDot=({cx,cy,payload})=>{if(!payload._sig)return null;return(<g><polygon points={`${cx},${cy-9} ${cx+6},${cy} ${cx-6},${cy}`} fill={T.up} opacity={0.92}><title>Buy: {payload._lbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy+12} stroke={T.up} strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};
-            const SellDot=({cx,cy,payload})=>{if(!payload._sig)return null;return(<g><polygon points={`${cx},${cy+9} ${cx+6},${cy} ${cx-6},${cy}`} fill={T.down} opacity={0.92}><title>Sell: {payload._lbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy-12} stroke={T.down} strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};
-            return(<><Line data={buyData} dataKey="_sig" stroke="none" dot={<BuyDot/>} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/><Line data={sellData} dataKey="_sig" stroke="none" dot={<SellDot/>} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/></>);
-          })()}
-          {/* Brush — range selector + scroll zoom sync */}
-          <Brush
-            dataKey="date"
-            height={18}
-            stroke={T.border}
-            fill={T.surfaceB||T.surface}
-            travellerWidth={8}
-            startIndex={brushS}
-            endIndex={brushE}
-            onChange={({startIndex,endIndex})=>{
-              if(startIndex!=null)setBrushS(startIndex);
-              if(endIndex!=null)setBrushE(endIndex);
-            }}
-            tickFormatter={()=>""}
-          />
+          {showSupport&&srLevels&&srLevels.map((z,i)=>(<ReferenceLine key={i} y={z.price} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5 3" strokeWidth={1} opacity={0.45}/>))}
+          {showSignals&&signals&&signals.length>0&&(()=>{const sigMap={};signals.forEach(s=>{if(!sigMap[s.i])sigMap[s.i]={buy:[],sell:[]};sigMap[s.i][s.dir].push(s);});const buyData=data.map((d,i)=>({...d,_sig:sigMap[i]?.buy?.length?d.close:null,_lbl:sigMap[i]?.buy?.map(s=>s.label).join(" · ")||""}));const sellData=data.map((d,i)=>({...d,_sig:sigMap[i]?.sell?.length?d.close:null,_lbl:sigMap[i]?.sell?.map(s=>s.label).join(" · ")||""}));const BD=({cx,cy,payload})=>{if(!payload._sig)return null;return(<g><polygon points={`${cx},${cy-9} ${cx+6},${cy} ${cx-6},${cy}`} fill={T.up} opacity={0.92}><title>Buy: {payload._lbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy+12} stroke={T.up} strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};const SD=({cx,cy,payload})=>{if(!payload._sig)return null;return(<g><polygon points={`${cx},${cy+9} ${cx+6},${cy} ${cx-6},${cy}`} fill={T.down} opacity={0.92}><title>Sell: {payload._lbl}</title></polygon><line x1={cx} y1={cy} x2={cx} y2={cy-12} stroke={T.down} strokeWidth={0.7} strokeDasharray="2,2" opacity={0.4}/></g>);};return(<><Line data={buyData} dataKey="_sig" stroke="none" dot={<BD/>} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/><Line data={sellData} dataKey="_sig" stroke="none" dot={<SD/>} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/></>);})()}
+          <Brush dataKey="date" height={18} stroke={T.border} fill={T.surfaceB||T.surface} travellerWidth={8} startIndex={brushS} endIndex={brushE} onChange={({startIndex,endIndex})=>{if(startIndex!=null)setBrushS(startIndex);if(endIndex!=null)setBrushE(endIndex);}} tickFormatter={()=>""}/>
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -856,28 +685,21 @@ function MACDPanel({data,T}){
     </ResponsiveContainer>
   );
 }
-/* ════════════════════════════════════════════════════
-   RSI PANEL
-════════════════════════════════════════════════════ */
 function RSIPanel({data,T}){
   const d=data.filter(x=>x.rsi!=null);
-  const lastRSI=d.length?d[d.length-1].rsi:null;
-  const rsiColor=lastRSI>=70?T.down:lastRSI<=30?T.up:T.ema9;
+  const last=d.length?d[d.length-1].rsi:null;
+  const rc=last>=70?T.down:last<=30?T.up:T.ema9;
   const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,fontSize:10},itemStyle:{color:T.text}};
-  return(
-    <ResponsiveContainer width="100%" height={80}>
-      <ComposedChart data={d} margin={{top:2,right:8,left:0,bottom:0}}>
-        <CartesianGrid stroke={T.chartGrid} strokeDasharray="3 4" vertical={false}/>
-        <XAxis dataKey="date" tick={false}/>
-        <YAxis domain={[0,100]} tick={{fill:T.textSub,fontSize:7}} width={28} ticks={[30,50,70]}/>
-        <Tooltip {...tt} formatter={v=>[v?.toFixed(1),"RSI(14)"]}/>
-        <ReferenceLine y={70} stroke={T.down} strokeDasharray="3 3" strokeWidth={1} opacity={0.5}/>
-        <ReferenceLine y={30} stroke={T.up}   strokeDasharray="3 3" strokeWidth={1} opacity={0.5}/>
-        <ReferenceLine y={50} stroke={T.border} strokeWidth={0.8} opacity={0.6}/>
-        <Area type="monotone" dataKey="rsi" stroke={rsiColor} fill={`${rsiColor}18`} strokeWidth={1.5} dot={false} isAnimationActive={false} name="RSI"/>
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
+  return(<ResponsiveContainer width="100%" height={80}><ComposedChart data={d} margin={{top:2,right:8,left:0,bottom:0}}>
+    <CartesianGrid stroke={T.chartGrid} strokeDasharray="3 4" vertical={false}/>
+    <XAxis dataKey="date" tick={false}/>
+    <YAxis domain={[0,100]} tick={{fill:T.textSub,fontSize:7}} width={28} ticks={[30,50,70]}/>
+    <Tooltip {...tt} formatter={v=>[v?.toFixed(1),"RSI(14)"]}/>
+    <ReferenceLine y={70} stroke={T.down} strokeDasharray="3 3" strokeWidth={1} opacity={0.5}/>
+    <ReferenceLine y={30} stroke={T.up}   strokeDasharray="3 3" strokeWidth={1} opacity={0.5}/>
+    <ReferenceLine y={50} stroke={T.border} strokeWidth={0.8} opacity={0.6}/>
+    <Area type="monotone" dataKey="rsi" stroke={rc} fill={`${rc}18`} strokeWidth={1.5} dot={false} isAnimationActive={false} name="RSI"/>
+  </ComposedChart></ResponsiveContainer>);
 }
 
 function VolumePanel({data,T}){
@@ -928,13 +750,13 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       {chip(ind.ema,    T.ema9,  "EMA",()=>toggleInd("ema"))}
       {chip(ind.volume, T.accent,"Vol",()=>toggleInd("volume"))}
       {chip(ind.macd,   T.accent,"MACD",()=>toggleInd("macd"))}
-      {chip(ind.support,T.up,   "S/R",   ()=>toggleInd("support"))}
+      {chip(ind.support,T.up,   "S/R",()=>toggleInd("support"))}
       <div style={{width:1,height:14,background:T.border}}/>
-      {chip(ind.vwap,   "#60A5FA","VWAP",  ()=>toggleInd("vwap"))}
-      {chip(ind.bb,     "#A78BFA","BB",    ()=>toggleInd("bb"))}
-      {chip(ind.rsi,    T.ema9,  "RSI",   ()=>toggleInd("rsi"))}
-      <div style={{width:1,height:14,background:T.border}}/>
-      {chip(ind.signals,"#F43F5E","Signals",()=>toggleInd("signals"))}
+      {chip(ind.vwap,      "#60A5FA","VWAP",     ()=>toggleInd("vwap"))}
+      {chip(ind.bb,        "#A78BFA","BB",        ()=>toggleInd("bb"))}
+      {chip(ind.rsi,       T.ema9,  "RSI",       ()=>toggleInd("rsi"))}
+      {chip(ind.signals,   "#F43F5E","Signals",   ()=>toggleInd("signals"))}
+      {chip(ind.volProfile,"#F59E0B","VP",        ()=>toggleInd("volProfile"))}
     </div>
   );
 }
@@ -945,7 +767,7 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
 function IndexChart({index,T}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
-  const [ind,setInd]=useState({ema:false,volume:false,macd:false,support:false,vwap:false,bb:false,rsi:false,signals:false});
+  const [ind,setInd]=useState({ema:false,volume:false,macd:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
@@ -964,7 +786,7 @@ function IndexChart({index,T}){
 
   const data=useMemo(()=>enrich(rawChart),[rawChart]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
-  const signals=useMemo(()=>ind.signals?detectSignals(data):[]  ,[data,ind.signals]);
+  const signals=useMemo(()=>ind.signals?detectSignals(chartData):[],[chartData,ind.signals]);
   const ch=pct(index.p,index.pc),isUp=ch>=0;
   const col=isUp?T.up:T.down;
   return(
@@ -981,13 +803,12 @@ function IndexChart({index,T}){
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
       <div>
         {chartMode==="candle"
-          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T}/>
+          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T}/>
           :<LineChartView data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={185} accent={col}/>
         }
       </div>
       {ind.volume&&<div style={{marginTop:8}}><div style={{fontSize:8,color:T.textSub,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>Volume</div><VolumePanel data={data} T={T}/></div>}
       {ind.macd&&<div style={{marginTop:8}}><div style={{fontSize:8,color:T.textSub,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={data} T={T}/></div>}
-      {ind.rsi&&(()=>{const last=data.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{marginTop:8}}><div style={{fontSize:8,color:T.textSub,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={data} T={T}/></div>);})()}
     </div>
   );
 }
@@ -1000,11 +821,30 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing})
   const [newsOpen,setNewsOpen]=useState(false);
 
   useEffect(()=>{
-    const filtered={
-      earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,6),
+    // Show hardcoded macro events immediately while earnings load
+    setEvents({
+      earnings:[],
       macro:KNOWN_EVENTS.macro.slice(0,4),
-    };
-    setEvents(filtered);
+    });
+    // Fetch live earnings calendar from Finnhub
+    fetch(`/api/events?symbols=${encodeURIComponent(symbols.join(","))}`)
+      .then(r=>r.ok?r.json():[])
+      .then(live=>{
+        setEvents({
+          earnings:(live.length
+            ? live
+            : KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s))
+          ).slice(0,8),
+          macro:KNOWN_EVENTS.macro.slice(0,4),
+        });
+  
+      {ind.rsi&&(()=>{const last=data.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{marginTop:8}}><div style={{fontSize:8,color:T.textSub,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={data} T={T}/></div>);})()}    })
+      .catch(()=>{
+        setEvents({
+          earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,6),
+          macro:KNOWN_EVENTS.macro.slice(0,4),
+        });
+      });
   },[symbols.join(",")]);
 
   const sentC=s=>s==="bullish"?T.up:s==="bearish"?T.down:T.textSub;
@@ -1152,17 +992,17 @@ const REC_CONFIG={
 };
 
 function YFInsights({symbol,price,T}){
-  const [summary, setSummary]=useState(null);
+  const [analyst, setAnalyst]=useState(null);
   const [news,    setNews]   =useState([]);
   const [loading, setLoading]=useState(true);
 
   useEffect(()=>{
-    setLoading(true);setSummary(null);setNews([]);
+    setLoading(true);setAnalyst(null);setNews([]);
     Promise.all([
-      fetchYFSummary(symbol),
-      fetchYFNews(symbol,5),
-    ]).then(([s,n])=>{
-      setSummary(s);
+      fetchAnalystData(symbol),    // Finnhub — primary, no auth issues
+      fetchYFNews(symbol,5),       // Finnhub company news
+    ]).then(([a,n])=>{
+      setAnalyst(a);
       setNews((n||[]).slice(0,4));
     }).catch(()=>{}).finally(()=>setLoading(false));
   },[symbol]);
@@ -1173,21 +1013,21 @@ function YFInsights({symbol,price,T}){
     </div>
   );
 
-  const fd=summary?.financialData, ks=summary?.defaultKeyStatistics;
-  const upgrades=(summary?.upgradesDowngradesHistory?.history||[]).slice(0,3);
-  const rec=fd?.recommendationKey;
-  const cfg=REC_CONFIG[rec];
-  const target=fd?.targetMeanPrice?.raw;
-  const targetLow=fd?.targetLowPrice?.raw;
-  const targetHigh=fd?.targetHighPrice?.raw;
-  const analysts=fd?.numberOfAnalystOpinions?.raw;
-  const upside=target&&price?((target-price)/price*100):null;
-  const pe=ks?.forwardPE?.raw||ks?.trailingPE?.raw;
-  const beta=ks?.beta?.raw;
-  const w52h=ks?.fiftyTwoWeekHigh?.raw;
-  const w52l=ks?.fiftyTwoWeekLow?.raw;
+  const rec     = analyst?.recommendationKey;
+  const cfg     = REC_CONFIG[rec];
+  const target  = analyst?.targetMeanPrice;
+  const targetLow  = analyst?.targetLowPrice;
+  const targetHigh = analyst?.targetHighPrice;
+  const analysts   = analyst?.numberOfAnalysts;
+  const upside  = target&&price?((target-price)/price*100):null;
+  const pe      = analyst?.peRatioTTM;
+  const beta    = analyst?.beta;
+  const w52h    = analyst?.week52High;
+  const w52l    = analyst?.week52Low;
+  const buckets = analyst?.buckets;
+  const upgrades = [];  // Finnhub free tier doesn't provide upgrade history
 
-  const noData=!fd&&!ks&&!news.length;
+  const noData=!analyst&&!news.length;
   if(noData) return(
     <div style={{padding:"12px 16px",background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12}}>
       <div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>No analyst data available for {symbol}.</div>
@@ -1286,7 +1126,7 @@ function YFInsights({symbol,price,T}){
 function StockDetail({selected,names,T,onClose}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
-  const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false});
+  const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
@@ -1305,7 +1145,7 @@ function StockDetail({selected,names,T,onClose}){
 
   const chartData=useMemo(()=>enrich(rawChart),[rawChart]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
-  const signals=useMemo(()=>ind.signals?detectSignals(chartData):[]  ,[chartData,ind.signals]);
+  const signals=useMemo(()=>ind.signals?detectSignals(chartData):[],[chartData,ind.signals]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
   return(
     <div style={{animation:"fadeUp 0.18s ease"}}>
@@ -1328,26 +1168,11 @@ function StockDetail({selected,names,T,onClose}){
             <span style={{animation:"pulse 1.2s infinite",display:"inline-block"}}>⟳</span> Fetching real-time chart…
            </div>
           :chartData.length>0&&(chartMode==="candle"
-            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T}/>
+            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T}/>
             :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={195} accent={isUp?T.up:T.down}/>
           )
         }
       </div>
-      {/* Signal summary strip */}
-      {ind.signals&&signals.length>0&&(()=>{
-        const buys=signals.filter(s=>s.dir==="buy");
-        const sells=signals.filter(s=>s.dir==="sell");
-        const last=signals.at(-1);
-        return(
-          <div style={{display:"flex",gap:12,padding:"6px 12px",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8,fontSize:11,fontFamily:T.sans,alignItems:"center",flexWrap:"wrap"}}>
-            <span style={{fontSize:9,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",color:T.textSub}}>Signals</span>
-            <span style={{color:T.up,fontWeight:700}}>▲ {buys.length} Buy</span>
-            <span style={{color:T.down,fontWeight:700}}>▼ {sells.length} Sell</span>
-            <span style={{color:T.textSub}}>·</span>
-            <span style={{color:T.textSub,fontSize:10}}>Latest: <span style={{color:last.dir==="buy"?T.up:T.down}}>{last.label}</span> @ {chartData[last.i]?.date}</span>
-          </div>
-        );
-      })()}
       {ind.volume&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>Volume</div><VolumePanel data={chartData} T={T}/></div>}
       {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
       {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T}/></div>);})()}
@@ -1446,15 +1271,13 @@ function Recommendations({stocks,T,refreshKey}){
     if(!top.length){setLoading(false);return;}
     setLoading(true);setRecs([]);
     const results=await Promise.all(top.map(async stock=>{
-      const s=await fetchYFSummary(stock.s);
-      if(!s)return null;
-      const fd=s.financialData;
-      if(!fd?.recommendationKey)return null;
-      const rec=fd.recommendationKey;
-      const target=fd.targetMeanPrice?.raw;
-      const targetLow=fd.targetLowPrice?.raw;
-      const targetHigh=fd.targetHighPrice?.raw;
-      const analysts=fd.numberOfAnalystOpinions?.raw;
+      const a=await fetchAnalystData(stock.s);
+      if(!a?.recommendationKey)return null;
+      const rec=a.recommendationKey;
+      const target=a.targetMeanPrice;
+      const targetLow=a.targetLowPrice;
+      const targetHigh=a.targetHighPrice;
+      const analysts=a.numberOfAnalysts;
       const upside=target&&stock.p?((target-stock.p)/stock.p*100):null;
       return{symbol:stock.s,price:stock.p,rec,target,targetLow,targetHigh,analysts,upside};
     }));
@@ -1670,13 +1493,13 @@ export default function StockScreener(){
   const [isMobile,setIsMobile]=useState(false);
   const [names,setNames]=useState({...BASE_NAMES});
   const [tabs,setTabs]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("screener_tabs")??"null");return s?.length?s:DEFAULT_TABS;}catch{return DEFAULT_TABS;}});
-  const [activeTab,setActiveTab]=useState(()=>{try{return localStorage.getItem("screener_activeTab")||"tech";}catch{return "tech";}});
+  const [activeTab,setActiveTab]=useState(()=>{try{return localStorage.getItem("screener_activeTab")||"tech";}catch{return"tech";}});
   const [indices,setIndices]=useState(INDICES);
   const [mktNews,setMktNews]=useState([]);
   const [selectedIdx,setSelectedIdx]=useState(null);
   const [selected,setSelected]=useState(null);
-  const [viewMode,setViewMode]=useState(()=>{try{return localStorage.getItem("screener_viewMode")||"grid";}catch{return "grid";}});
-  const [sort,setSort]=useState(()=>{try{return localStorage.getItem("screener_sort")||"change_desc";}catch{return "change_desc";}});
+  const [viewMode,setViewMode]=useState(()=>{try{return localStorage.getItem("screener_viewMode")||"grid";}catch{return"grid";}});
+  const [sort,setSort]=useState(()=>{try{return localStorage.getItem("screener_sort")||"change_desc";}catch{return"change_desc";}});
   const [newTicker,setNewTicker]=useState("");
   const [newTabName,setNewTabName]=useState("");
   const [addingTab,setAddingTab]=useState(false);
@@ -1692,7 +1515,6 @@ export default function StockScreener(){
     return()=>window.removeEventListener("resize",check);
   },[]);
 
-  // ── Persist to localStorage on change ──────────────────────────────────────
   useEffect(()=>{try{localStorage.setItem("screener_dark",JSON.stringify(isDark));}catch{}},[isDark]);
   useEffect(()=>{try{localStorage.setItem("screener_tabs",JSON.stringify(tabs));}catch{}},[tabs]);
   useEffect(()=>{try{localStorage.setItem("screener_activeTab",activeTab);}catch{}},[activeTab]);
@@ -1720,6 +1542,11 @@ export default function StockScreener(){
   useEffect(()=>{
     if(didMount.current)return;
     didMount.current=true;
+    // Fetch news immediately so it appears without waiting for price refresh
+    fetchYFNews("stock market",8).then(articles=>{
+      if(articles.length)
+        setMktNews(articles.map(n=>({h:n.title,url:n.link,publisher:n.publisher,time:n.providerPublishTime,sentiment:inferSentiment(n.title)})));
+    }).catch(()=>{});
     setTimeout(()=>runRefresh(curTab.stocks),600);
   },[]);// eslint-disable-line
 
