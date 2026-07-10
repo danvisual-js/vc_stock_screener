@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ComposedChart, BarChart, Line, Area, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Brush
@@ -78,7 +78,7 @@ function checkAndFireAlerts(stocks){
     const hit=a.condition==="above"?s.p>=a.price:s.p<=a.price;
     if(hit){a.triggered=true;changed=true;
       if("Notification"in window&&Notification.permission==="granted"){
-        try{new Notification("🔔 "+a.symbol+" Alert",{body:`${a.symbol} ${a.condition==="above"?"above":"below"} $${a.price.toFixed(2)} — now $${s.p.toFixed(2)}`});}catch{}
+        try{new Notification(a.symbol+" Alert",{body:`${a.symbol} ${a.condition==="above"?"above":"below"} $${a.price.toFixed(2)} — now $${s.p.toFixed(2)}`});}catch{}
       }
     }
   });
@@ -96,7 +96,7 @@ function AlertModal({symbol,currentPrice,T,onClose}){
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:24,width:300,boxShadow:"0 16px 40px rgba(0,0,0,0.5)"}}>
-        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>🔔 Price Alert — {symbol}</div>
+        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}} style={{display:"flex",alignItems:"center",gap:7}}><I.Bell s={14} c={T.accent}/> Price Alert — {symbol}</div>
         <div style={{fontSize:12,color:T.textSub,marginBottom:16,fontFamily:T.sans}}>Current ${currentPrice?.toFixed(2)||"—"}</div>
         <select value={cond} onChange={e=>setCond(e.target.value)} style={{width:"100%",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:13,marginBottom:10,outline:"none"}}>
           <option value="above">Notify when price rises ABOVE</option>
@@ -119,14 +119,14 @@ function AlertListModal({T,onClose}){
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:24,width:320,maxHeight:"70vh",overflowY:"auto"}}>
-        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:16}}>🔔 Price Alerts</div>
-        {alerts.length===0&&<div style={{fontSize:12,color:T.textSub}}>No alerts set. Click 🔕 on any stock card.</div>}
+        <div style={{display:"flex",alignItems:"center",gap:7,fontSize:15,fontWeight:700,color:T.text,marginBottom:16}}><I.Bell s={14} c={T.accent}/> Price Alerts</div>
+        {alerts.length===0&&<div style={{fontSize:12,color:T.textSub}}>No alerts set. Click the bell icon on any stock card.</div>}
         {alerts.map(a=>(<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
           <div><span style={{fontFamily:"monospace",fontWeight:700,color:T.text,fontSize:13}}>{a.symbol}</span>
             <span style={{fontSize:11,color:T.textSub,marginLeft:8}}>{a.condition==="above"?"above":"below"} ${a.price.toFixed(2)}</span>
             {a.triggered&&<span style={{fontSize:9,color:T.up,marginLeft:6,fontWeight:700}}>FIRED</span>}
           </div>
-          <button onClick={()=>remove(a.id)} style={{background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,padding:"2px 6px"}}>✕</button>
+          <button onClick={()=>remove(a.id)} style={{background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,padding:"2px 6px"}}><I.X s={10}/></button>
         </div>))}
         <button onClick={onClose} style={{marginTop:16,width:"100%",background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px",color:T.textSub,fontSize:12,cursor:"pointer"}}>Close</button>
       </div>
@@ -148,6 +148,28 @@ function getMarketSession(){
   return"closed";
 }
 const SESSION_CFG={open:{label:"Market Open",color:"#00D084"},pre:{label:"Pre-Market",color:"#F59E0B"},after:{label:"After Hours",color:"#60A5FA"},closed:{label:"Market Closed",color:"#64748B"}};
+
+/* ════════════════════════════════════════════════════
+   SVG ICON LIBRARY — consistent 24px Lucide-style
+════════════════════════════════════════════════════ */
+const I={
+  Bell:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+  BellOff:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>,
+  BellAlert:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><circle cx="19" cy="5" r="3" fill={c} stroke="none"/></svg>,
+  Refresh:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+  Moon:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>,
+  Sun:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>,
+  Grid:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  List:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
+  Filter:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>,
+  BarChart:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  TrendUp:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+  X:({s=11,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2.2} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  ChevronDown:({s=12,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>,
+  ChevronUp:({s=12,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round"><polyline points="18 15 12 9 6 15"/></svg>,
+  Plus:({s=13,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  News:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>,
+};
 
 /* ════════════════════════════════════════════════════
    THEMES — Yahoo Finance / iOS Finance aesthetic
@@ -491,6 +513,28 @@ async function fetchAnalystData(symbol){
   }catch{return null;}
 }
 
+// Dual-source: Finnhub first, Yahoo Finance quoteSummary as fallback
+async function fetchBestAnalystData(symbol){
+  // 1. Try Finnhub
+  const a=await fetchAnalystData(symbol);
+  if(a?.recommendationKey)return a;
+  // 2. Fallback to Yahoo Finance
+  const yf=await fetchYFSummary(symbol);
+  if(!yf?.financialData?.recommendationKey)return null;
+  const fd=yf.financialData,ks=yf.defaultKeyStatistics||{};
+  return{
+    recommendationKey: fd.recommendationKey,
+    numberOfAnalysts:  fd.numberOfAnalystOpinions?.raw||null,
+    targetMeanPrice:   fd.targetMeanPrice?.raw||null,
+    targetLowPrice:    fd.targetLowPrice?.raw||null,
+    targetHighPrice:   fd.targetHighPrice?.raw||null,
+    peRatioTTM:        ks.forwardPE?.raw||ks.trailingPE?.raw||null,
+    beta:              ks.beta?.raw||null,
+    week52High:        ks.fiftyTwoWeekHigh?.raw||null,
+    week52Low:         ks.fiftyTwoWeekLow?.raw||null,
+  };
+}
+
 // Finnhub news via server proxy
 async function fetchYFNews(query,count=6){
   try{
@@ -732,10 +776,11 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
   useEffect(()=>{setBrushS(0);setBrushE(Math.max(0,data.length-1));},[dsKey]);// eslint-disable-line
   const isZoomed=brushS>0||brushE<data.length-1;
   const sigChartData=useMemo(()=>{
-    if(!showSignals||!signals?.length)return{d:data,hasSigs:false};
+    // Always augment data regardless of showSignals — prevents chart resize on toggle
+    if(!signals?.length)return{d:data,hasSigs:false};
     const m={};signals.forEach(s=>{if(!m[s.i])m[s.i]={buy:[],sell:[]};m[s.i][s.dir].push(s);});
-    return{hasSigs:true,d:data.map((row,i)=>({...row,_buy:m[i]?.buy?.length?row.close:null,_buyLbl:m[i]?.buy?.map(s=>s.label).join(" · ")||"",_sell:m[i]?.sell?.length?row.close:null,_sellLbl:m[i]?.sell?.map(s=>s.label).join(" · ")||""}))};
-  },[data,signals,showSignals]);
+    return{hasSigs:true,d:data.map((row,i)=>({...row,_buy:m[i]?.buy?.length?row.close:undefined,_buyLbl:m[i]?.buy?.map(s=>s.label).join(" · ")||"",_sell:m[i]?.sell?.length?row.close:undefined,_sellLbl:m[i]?.sell?.map(s=>s.label).join(" · ")||""}))};
+  },[data,signals]); // ← no showSignals — data ref stays stable when toggle changes
   const onWheel=useCallback((e)=>{e.preventDefault();const vis=brushE-brushS,dir=e.deltaY>0?1:-1;const amt=Math.max(1,Math.floor(vis*0.12));const rect=divRef.current?.getBoundingClientRect();const ratio=rect?(e.clientX-rect.left)/rect.width:0.5;const dl=Math.round(amt*ratio),dr=amt-dl;const ns=Math.max(0,brushS+dir*dl),ne=Math.min(data.length-1,brushE-dir*dr);if(ne-ns>=4){setBrushS(ns);setBrushE(ne);}},[brushS,brushE,data.length]);
   useEffect(()=>{const el=divRef.current;if(!el)return;el.addEventListener("wheel",onWheel,{passive:false});return()=>el.removeEventListener("wheel",onWheel);},[onWheel]);
   const resetZoom=()=>{setBrushS(0);setBrushE(Math.max(0,data.length-1));};
@@ -746,11 +791,11 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
     <div ref={divRef} style={{position:"relative"}} onDoubleClick={resetZoom}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:4,right:8,zIndex:10,background:"#0F1018",border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>↺ {brushE-brushS+1}/{data.length}</div>}
       <ResponsiveContainer width="100%" height={height+20}>
-        <ComposedChart data={showSignals&&sigChartData?.hasSigs?sigChartData.d:data} margin={{top:6,right:8,left:0,bottom:0}}>
+        <ComposedChart data={sigChartData.d} margin={{top:6,right:8,left:0,bottom:0}}>
           <defs><linearGradient id={`grad-${col.replace("#","")}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={col} stopOpacity={0.15}/><stop offset="95%" stopColor={col} stopOpacity={0}/></linearGradient></defs>
           <CartesianGrid stroke={T.chartGrid} strokeDasharray="2 5" vertical={false}/>
           <XAxis dataKey="date" tick={{fill:T.textSub,fontSize:8}} interval="preserveStartEnd"/>
-          <YAxis domain={["auto","auto"]} tick={{fill:T.textSub,fontSize:8}} width={44} tickFormatter={fY}/>
+          <YAxis domain={[(dMin)=>(dMin*0.998),(dMax)=>(dMax*1.002)]} tick={{fill:T.textSub,fontSize:8}} width={44} tickFormatter={fY}/>
           <Tooltip {...tt}/>
           <Area type="monotone" dataKey="close" stroke={col} fill={`url(#grad-${col.replace("#","")})`} strokeWidth={2} dot={false} name="Price"/>
           {showEMA&&<><Line type="monotone" dataKey="ema9" stroke={T.ema9} dot={false} strokeWidth={1} strokeDasharray="4 2" name="EMA 9" connectNulls={false}/><Line type="monotone" dataKey="ema20" stroke={T.ema20} dot={false} strokeWidth={1} name="EMA 20" connectNulls={false}/><Line type="monotone" dataKey="ema50" stroke={T.ema50} dot={false} strokeWidth={1.5} name="EMA 50" connectNulls={false}/></>}
@@ -1013,7 +1058,7 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing})
             return allEv.map((e,i)=>(
               <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{display:"flex",gap:6,alignItems:"center",minWidth:0}}>
-                  <span style={{fontSize:10,flexShrink:0}}>{e.type==="earnings"?"📊":"🏦"}</span>
+                  <span style={{fontSize:10,flexShrink:0}}>{e.type==="earnings"?<I.BarChart s={11}/>:<I.TrendUp s={11}/>}</span>
                   <div style={{minWidth:0}}>
                     <span style={{fontFamily:e.type==="earnings"?T.mono:T.sans,fontSize:11,fontWeight:700,color:T.text}}>{e.label}</span>
                     {e.sub&&<span style={{fontSize:9,color:T.textSub,marginLeft:4,fontFamily:T.sans}}>{e.sub}</span>}
@@ -1032,32 +1077,38 @@ function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing})
 /* ════════════════════════════════════════════════════
    STOCK CARDS
 ════════════════════════════════════════════════════ */
-function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing}){
+function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,onSetAlert}){
   const {s,p,pc,loading:ld,failed}=stock;
-  const ch=pct(p||0,pc||1),isUp=ch>=0;
+  const ch=pct(p||0,pc||1);
+  const hasAlert=onSetAlert?getAlerts().some(a=>a.symbol===s&&!a.triggered):false;
   return(
-    <div onClick={onClick} style={{position:"relative",background:selected?T.accentBg:T.surface,border:`1px solid ${selected?T.accent:T.border}`,borderRadius:12,padding:"14px 14px 10px",cursor:"pointer",boxShadow:selected?`0 0 0 2px ${T.accent}30`:T.shadow,transition:"all 0.15s"}}>
+    <div onClick={onClick} style={{position:"relative",background:selected?T.accentBg:T.surface,border:`1px solid ${selected?T.accent:T.border}`,borderRadius:12,padding:"12px 12px 10px",cursor:"pointer",boxShadow:selected?`0 0 0 2px ${T.accent}30`:T.shadow,transition:"all 0.15s"}}>
+      {/* Header row: ticker + name on left, price + action icons on right */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-        <div>
+        <div style={{minWidth:0,flex:1}}>
           <div style={{fontFamily:T.sans,fontSize:13,fontWeight:700,color:T.text}}>{s}</div>
           <div style={{fontSize:9,color:T.textSub,marginTop:1,fontFamily:T.sans}}>{ld?"Fetching…":failed?"—":(names[s]||s)}</div>
         </div>
-        <div style={{textAlign:"right"}}>
-          {ld||refreshing
-            ?<div style={{width:52,height:18,background:T.border,borderRadius:4,animation:"shimmer 1.2s infinite"}}/>
-            :<div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
-          }
+        {/* Price + action buttons — all inline, no absolute positioning */}
+        <div style={{display:"flex",alignItems:"flex-start",gap:4,flexShrink:0,marginLeft:8}}>
+          <div style={{textAlign:"right"}}>
+            {ld||refreshing
+              ?<div style={{width:48,height:16,background:T.border,borderRadius:4,animation:"shimmer 1.2s infinite"}}/>
+              :<div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
+            }
+          </div>
+          {onSetAlert&&<button onClick={e=>{e.stopPropagation();onSetAlert();}} title={hasAlert?"Alert set":"Set alert"} style={{width:20,height:20,borderRadius:6,border:`1px solid ${hasAlert?T.accent:T.border}`,background:hasAlert?`${T.accent}20`:"transparent",color:hasAlert?T.accent:T.textSub,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{hasAlert?<I.BellAlert s={10} c={T.accent}/>:<I.Bell s={10}/>}</button>}
+          {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{width:18,height:18,borderRadius:6,border:"none",background:T.border,color:T.textSub,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><I.X s={9}/></button>}
         </div>
       </div>
       {!ld&&!failed&&p>0&&(
         <div style={{margin:"4px 0"}}>
-          <Sparkline price={p} changePct={ch} T={T} w={undefined} h={26}/>
+          <Sparkline price={p} changePct={ch} T={T} w={undefined} h={24}/>
         </div>
       )}
       <div style={{marginTop:4}}>
         {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
       </div>
-      {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{position:"absolute",top:8,right:8,width:18,height:18,borderRadius:9,border:"none",background:T.border,color:T.textSub,fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
     </div>
   );
 }
@@ -1075,7 +1126,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing})
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
       </div>
       {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
-      {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}>✕</button>}
+      {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}><I.X s={10}/></button>}
     </div>
   );
 }
@@ -1099,8 +1150,8 @@ function YFInsights({symbol,price,T}){
   useEffect(()=>{
     setLoading(true);setAnalyst(null);setNews([]);
     Promise.all([
-      fetchAnalystData(symbol),    // Finnhub — primary, no auth issues
-      fetchYFNews(symbol,5),       // Finnhub company news
+      fetchBestAnalystData(symbol),  // Finnhub → YF fallback
+      fetchYFNews(symbol,5),         // Finnhub company news
     ]).then(([a,n])=>{
       setAnalyst(a);
       setNews((n||[]).slice(0,4));
@@ -1223,7 +1274,7 @@ function YFInsights({symbol,price,T}){
 }
 
 
-function StockDetail({selected,names,T,onClose}){
+function StockDetail({selected,names,T,onClose,onSetAlert}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
@@ -1258,7 +1309,10 @@ function StockDetail({selected,names,T,onClose}){
               <DailyChange p={selected.p} pc={selected.pc} T={T} size="lg"/>
             </div>
           </div>
-          <button onClick={onClose} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.textSub,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>✕</button>
+          <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+            {onSetAlert&&(()=>{const ha=getAlerts().some(a=>a.symbol===selected.s&&!a.triggered);return(<button onClick={onSetAlert} title={ha?"Alert set":"Set price alert"} style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${ha?T.accent:T.border}`,background:ha?`${T.accent}15`:T.surfaceB,color:ha?T.accent:T.textSub,cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:11,fontFamily:T.sans}}>{ha?<I.BellAlert s={12} c={T.accent}/>:<I.Bell s={12}/>}{ha?"Alert set":"Alert"}</button>);})()}
+            <button onClick={onClose} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.textSub,fontSize:11,cursor:"pointer",fontFamily:T.sans}}><I.X s={10}/></button>
+          </div>
         </div>
       </div>
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
@@ -1284,40 +1338,38 @@ function StockDetail({selected,names,T,onClose}){
 /* ════════════════════════════════════════════════════
    RECOMMENDATIONS — Yahoo Finance analyst consensus
 ════════════════════════════════════════════════════ */
-function YahooRecommendations({stocks,T}){
+/* ════════════════════════════════════════════════════
+   RECOMMENDATIONS — Finnhub first, Yahoo Finance fallback
+════════════════════════════════════════════════════ */
+function YahooRecommendations({stocks,T,refreshKey}){
   const [recs,setRecs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [open,setOpen]=useState(true);
   const key=stocks.filter(s=>s.p>0).slice(0,6).map(s=>s.s).join(",");
 
-  useEffect(()=>{
+  const load=useCallback(async()=>{
     const top=stocks.filter(s=>s.p>0).slice(0,6);
     if(!top.length){setLoading(false);return;}
-    setLoading(true);
-    Promise.all(top.map(async stock=>{
-      const s=await fetchYFSummary(stock.s);
-      if(!s)return null;
-      const fd=s.financialData;
-      if(!fd?.recommendationKey)return null;
-      const rec=fd.recommendationKey;
-      const target=fd.targetMeanPrice?.raw;
-      const targetLow=fd.targetLowPrice?.raw;
-      const targetHigh=fd.targetHighPrice?.raw;
-      const analysts=fd.numberOfAnalystOpinions?.raw;
-      const upside=target&&stock.p?((target-stock.p)/stock.p*100):null;
-      return{symbol:stock.s,price:stock.p,rec,target,targetLow,targetHigh,analysts,upside};
-    })).then(r=>setRecs(r.filter(Boolean))).finally(()=>setLoading(false));
-  },[key]);
+    setLoading(true);setRecs([]);
+    const results=await Promise.all(top.map(async stock=>{
+      const a=await fetchBestAnalystData(stock.s);
+      if(!a?.recommendationKey)return null;
+      const upside=a.targetMeanPrice&&stock.p?((a.targetMeanPrice-stock.p)/stock.p*100):null;
+      return{symbol:stock.s,price:stock.p,rec:a.recommendationKey,target:a.targetMeanPrice,targetLow:a.targetLowPrice,targetHigh:a.targetHighPrice,analysts:a.numberOfAnalysts,upside};
+    }));
+    setRecs(results.filter(Boolean));
+    setLoading(false);
+  },[key,refreshKey]);
 
-  const refresh=()=>{setRecs([]);setLoading(true);/* trigger re-fetch via key change workaround */};
+  useEffect(()=>{load();},[key,refreshKey]);
 
   return(
     <div style={{background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,marginTop:14,overflow:"hidden",boxShadow:T.shadow}}>
       <div onClick={()=>setOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",cursor:"pointer",borderBottom:open?`1px solid ${T.border}`:"none"}}>
-        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans}}>📊 Analyst Consensus</div>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,display:"flex",alignItems:"center",gap:6}}><I.BarChart s={13} c={T.textSub}/>Analyst Consensus</div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           {loading&&<span style={{fontSize:10,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</span>}
-          <span style={{color:T.textSub,fontSize:12}}>{open?"▲":"▼"}</span>
+          <span style={{color:T.textSub,fontSize:12}}>{open?<I.ChevronUp s={11}/>:<I.ChevronDown s={11}/>}</span>
         </div>
       </div>
       {open&&(
@@ -1392,11 +1444,11 @@ function Recommendations({stocks,T,refreshKey}){
   return(
     <div style={{background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,marginTop:14,overflow:"hidden",boxShadow:T.shadow}}>
       <div onClick={()=>setOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",cursor:"pointer",borderBottom:open?`1px solid ${T.border}`:"none"}}>
-        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans}}>📊 Analyst Consensus</div>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,display:"flex",alignItems:"center",gap:6}}><I.BarChart s={13} c={T.textSub}/>Analyst Consensus</div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          {!loading&&<button onClick={e=>{e.stopPropagation();refresh();}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,fontFamily:T.sans}}>↻ Refresh</button>}
+          {!loading&&<button onClick={e=>{e.stopPropagation();refresh();}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,fontFamily:T.sans}} style={{display:"flex",alignItems:"center",gap:5}}><I.Refresh s={12}/>Refresh</button>}
           {loading&&<span style={{fontSize:10,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</span>}
-          <span style={{color:T.textSub,fontSize:12}}>{open?"▲":"▼"}</span>
+          <span style={{color:T.textSub,fontSize:12}}>{open?<I.ChevronUp s={11}/>:<I.ChevronDown s={11}/>}</span>
         </div>
       </div>
       {open&&(
@@ -1803,7 +1855,7 @@ export default function StockScreener(){
           <span style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginRight:4}}>Filter by change</span>
           {[["▲>2%",2],["▲>5%",5],["▲>10%",10]].map(([lbl,v])=>{const on=filters.changeMin===v;return<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMin:v,changeMax:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.up:T.border}`,background:on?`${T.up}18`:"transparent",color:on?T.up:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>;})}
           {[["▼>2%",-2],["▼>5%",-5],["▼>10%",-10]].map(([lbl,v])=>{const on=filters.changeMax===v;return<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMax:v,changeMin:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.down:T.border}`,background:on?`${T.down}18`:"transparent",color:on?T.down:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>;})}
-          <button onClick={()=>setFilters({changeMin:null,changeMax:null})} style={{marginLeft:"auto",fontSize:10,color:T.textSub,background:"none",border:"none",cursor:"pointer"}}>✕ Clear</button>
+          <button onClick={()=>setFilters({changeMin:null,changeMax:null})} style={{marginLeft:"auto",fontSize:10,color:T.textSub,background:"none",border:"none",cursor:"pointer"}}><I.X s={9}/> Clear</button>
           <span style={{fontSize:10,color:T.textSub}}>{stocks.length}/{allStocks.length} shown</span>
         </div>
       )}
@@ -1852,13 +1904,13 @@ export default function StockScreener(){
           <button onClick={()=>setAutoRefresh(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${autoRefresh?T.up:T.border}`,background:autoRefresh?T.upBg:"transparent",color:autoRefresh?T.up:T.textSub,fontSize:11,cursor:"pointer",fontWeight:autoRefresh?600:400}}>
             {autoRefresh?"⏱ Auto ON":"⏱ Auto"}
           </button>
-          <button onClick={()=>setShowAlertList(true)} title="View Alerts" style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:14,cursor:"pointer"}}>🔔</button>
-          <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${showFilters?T.accent:T.border}`,background:showFilters?`${T.accent}15`:T.surface,color:showFilters?T.accent:T.textSub,fontSize:11,cursor:"pointer",fontWeight:showFilters?700:400}}>Filter{filters.changeMin||filters.changeMax?" ✓":""}</button>
+          <button onClick={()=>setShowAlertList(true)} title="View Alerts" style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:14,cursor:"pointer"}}><I.Bell s={13}/></button>
+          <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${showFilters?T.accent:T.border}`,background:showFilters?`${T.accent}15`:T.surface,color:showFilters?T.accent:T.textSub,fontSize:11,cursor:"pointer",fontWeight:showFilters?700:400}} style={{display:"flex",alignItems:"center",gap:5}}><I.Filter s={11}/>Filter{filters.changeMin||filters.changeMax?" ✓":""}</button>
           <button onClick={()=>runRefresh(curTab.stocks)} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
             <span style={refreshing?{animation:"pulse 1s infinite",display:"inline-block"}:{}}>{refreshing?"↻ Refreshing…":"↻ Refresh"}</span>
           </button>
           <button onClick={()=>setIsDark(v=>!v)} style={{padding:"5px 11px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:12,cursor:"pointer",boxShadow:T.shadow}}>
-            {isDark?"☀️":"🌙"}
+            {isDark?<I.Sun s={13}/>:<I.Moon s={13}/>}
           </button>
         </div>
       </div>
@@ -1878,7 +1930,7 @@ export default function StockScreener(){
               borderBottom:`2px solid ${activeTab===t.id?T.accent:"transparent"}`,
               marginBottom:-1,transition:"all 0.12s",fontFamily:T.sans,whiteSpace:"nowrap",
             }}>{t.label}</button>
-            {activeTab===t.id&&tabs.length>1&&<button onClick={()=>removeTab(t.id)} style={{padding:"1px 4px",borderRadius:3,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer",marginLeft:-6}}>✕</button>}
+            {activeTab===t.id&&tabs.length>1&&<button onClick={()=>removeTab(t.id)} style={{padding:"1px 4px",borderRadius:3,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer",marginLeft:-6}}><I.X s={10}/></button>}
           </div>
         ))}
         {!addingTab
@@ -1889,7 +1941,7 @@ export default function StockScreener(){
               placeholder="Name…" autoFocus
               style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:11,width:80,outline:"none",fontFamily:T.sans}}/>
             <button onClick={addTab} style={{padding:"4px 9px",borderRadius:6,border:"none",background:T.accent,color:"#fff",fontSize:11,cursor:"pointer",fontFamily:T.sans}}>Add</button>
-            <button onClick={()=>setAddingTab(false)} style={{padding:"4px 7px",borderRadius:6,border:"none",background:"transparent",color:T.textSub,fontSize:11,cursor:"pointer"}}>✕</button>
+            <button onClick={()=>setAddingTab(false)} style={{padding:"4px 7px",borderRadius:6,border:"none",background:"transparent",color:T.textSub,fontSize:11,cursor:"pointer"}}><I.X s={10}/></button>
           </div>
         }
       </div>
@@ -1913,7 +1965,7 @@ export default function StockScreener(){
           ))}
           <div style={{width:1,height:12,background:T.border}}/>
           <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:7,display:"flex",overflow:"hidden",boxShadow:T.shadow}}>
-            {[["grid","▦"],["list","≡"]].map(([v,ic])=>(
+            {[["grid",<I.Grid s={12}/>],["list",<I.List s={12}/>]].map(([v,ic])=>(
               <button key={v} onClick={()=>setViewMode(v)} style={{padding:"4px 10px",border:"none",background:viewMode===v?T.accent:"transparent",color:viewMode===v?"#fff":T.textSub,fontSize:13,cursor:"pointer"}}>{ic}</button>
             ))}
           </div>
@@ -1925,13 +1977,13 @@ export default function StockScreener(){
         selected?(
           <div>
             <button onClick={()=>setSelected(null)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:12,cursor:"pointer",marginBottom:12,boxShadow:T.shadow,fontFamily:T.sans}}>← Back</button>
-            <StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)}/>
+            <StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})}/>
           </div>
         ):StockList
       ):(
         <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
           <div style={{width:selected?255:"100%",flexShrink:0,transition:"width 0.18s"}}>{StockList}</div>
-          {selected&&<div style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)}/></div>}
+          {selected&&<div style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})}/></div>}
         </div>
       )}
 
