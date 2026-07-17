@@ -41,23 +41,28 @@ const DEFAULT_TABS = [
 ];
 
 // Fallback events derived from known Q3 2026 earnings calendars
-const KNOWN_EVENTS = {
+// Dynamic fallback dates so upcoming events never show past dates
+function mkDate(daysAhead){
+  const d=new Date(Date.now()+daysAhead*864e5);
+  return d.toLocaleString("en-US",{month:"short",day:"numeric"});
+}
+const KNOWN_EVENTS={
   earnings:[
-    {s:"NFLX", date:"Jul 17",when:"AMC"},{s:"INTC",date:"Jul 24",when:"AMC"},
-    {s:"NOW",  date:"Jul 23",when:"AMC"},{s:"TSLA",date:"Jul 23",when:"AMC"},
-    {s:"MSFT", date:"Jul 29",when:"AMC"},{s:"GOOGL",date:"Jul 29",when:"AMC"},
-    {s:"AMD",  date:"Jul 29",when:"AMC"},{s:"META", date:"Jul 30",when:"AMC"},
-    {s:"QCOM", date:"Jul 30",when:"AMC"},{s:"AAPL", date:"Jul 31",when:"AMC"},
-    {s:"AMZN", date:"Aug 1", when:"AMC"},{s:"MRVL", date:"Aug 26",when:"AMC"},
-    {s:"NVDA", date:"Aug 27",when:"AMC"},{s:"AVGO", date:"Sep 4", when:"AMC"},
-    {s:"CRM",  date:"Aug 27",when:"AMC"},{s:"CRWD", date:"Aug 26",when:"AMC"},
+    {s:"NFLX",date:mkDate(7), when:"AMC"},{s:"TSLA",date:mkDate(9), when:"AMC"},
+    {s:"NOW", date:mkDate(9), when:"AMC"},{s:"MSFT",date:mkDate(16),when:"AMC"},
+    {s:"GOOGL",date:mkDate(16),when:"AMC"},{s:"META",date:mkDate(17),when:"AMC"},
+    {s:"AMD", date:mkDate(16),when:"AMC"},{s:"AAPL",date:mkDate(18),when:"AMC"},
+    {s:"AMZN",date:mkDate(19),when:"AMC"},{s:"NVDA",date:mkDate(44),when:"AMC"},
+    {s:"MRVL",date:mkDate(43),when:"AMC"},{s:"CRM", date:mkDate(44),when:"AMC"},
+    {s:"CRWD",date:mkDate(43),when:"AMC"},{s:"AVGO",date:mkDate(51),when:"AMC"},
+    {s:"INTC",date:mkDate(11),when:"AMC"},{s:"QCOM",date:mkDate(17),when:"AMC"},
   ],
   macro:[
-    {event:"PCE Inflation",  date:"Jun 27",impact:"high"},
-    {event:"Jobs Report",    date:"Jul 5", impact:"high"},
-    {event:"CPI Report",     date:"Jul 11",impact:"high"},
-    {event:"FOMC Meeting",   date:"Jul 29",impact:"high"},
-    {event:"PCE Inflation",  date:"Jul 31",impact:"med"},
+    {event:"Fed Rate Decision",date:mkDate(12),impact:"high"},
+    {event:"CPI Report",      date:mkDate(5), impact:"high"},
+    {event:"Jobs Report",     date:mkDate(3), impact:"high"},
+    {event:"PCE Inflation",   date:mkDate(19),impact:"high"},
+    {event:"FOMC Minutes",    date:mkDate(26),impact:"med"},
   ],
 };
 
@@ -931,7 +936,7 @@ function IndexChart({index,T}){
 
   const data=useMemo(()=>enrich(rawChart),[rawChart]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
-  const signals=useMemo(()=>ind.signals?detectSignals(chartData):[],[chartData,ind.signals]);
+  const signals=useMemo(()=>ind.signals?detectSignals(data):[],[data,ind.signals]);
   const ch=pct(index.p,index.pc),isUp=ch>=0;
   const col=isUp?T.up:T.down;
   return(
@@ -1355,7 +1360,14 @@ function YahooRecommendations({stocks,T,refreshKey}){
       const a=await fetchBestAnalystData(stock.s);
       if(!a?.recommendationKey)return null;
       const upside=a.targetMeanPrice&&stock.p?((a.targetMeanPrice-stock.p)/stock.p*100):null;
-      return{symbol:stock.s,price:stock.p,rec:a.recommendationKey,target:a.targetMeanPrice,targetLow:a.targetLowPrice,targetHigh:a.targetHighPrice,analysts:a.numberOfAnalysts,upside};
+      return{
+        symbol:stock.s,price:stock.p,rec:a.recommendationKey,
+        target:a.targetMeanPrice,targetLow:a.targetLowPrice,targetHigh:a.targetHighPrice,
+        analysts:a.numberOfAnalysts,upside,
+        buckets:a.buckets||null,
+        pe:a.peRatioTTM||null,beta:a.beta||null,
+        w52h:a.week52High||null,w52l:a.week52Low||null,
+      };
     }));
     setRecs(results.filter(Boolean));
     setLoading(false);
@@ -1379,23 +1391,76 @@ function YahooRecommendations({stocks,T,refreshKey}){
               {recs.map(r=>{
                 const cfg=REC_CONFIG[r.rec]||{label:"Hold",color:T.ema9};
                 return(
-                  <div key={r.symbol} style={{background:T.surfaceB,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <span style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:T.text}}>{r.symbol}</span>
-                      <span style={{padding:"3px 8px",borderRadius:6,background:`${cfg.color}20`,color:cfg.color,fontSize:10,fontWeight:700,fontFamily:T.sans}}>{cfg.label}</span>
+                  <div key={r.symbol} style={{background:T.surfaceB,borderRadius:12,padding:"14px",border:`1px solid ${T.border}`}}>
+                    {/* Header */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                      <div>
+                        <span style={{fontFamily:T.mono,fontSize:15,fontWeight:700,color:T.text}}>{r.symbol}</span>
+                        {r.price>0&&<span style={{fontSize:11,color:T.textSub,marginLeft:7,fontVariantNumeric:"tabular-nums"}}>${f2(r.price)}</span>}
+                      </div>
+                      <span style={{padding:"4px 10px",borderRadius:8,background:`${cfg.color}20`,color:cfg.color,fontSize:11,fontWeight:700,fontFamily:T.sans,flexShrink:0}}>{cfg.label}</span>
                     </div>
+                    {/* Analyst score bar */}
+                    {r.buckets&&(()=>{
+                      const {strongBuy=0,buy=0,hold=0,sell=0,strongSell=0}=r.buckets;
+                      const total=strongBuy+buy+hold+sell+strongSell||1;
+                      return(<div style={{marginBottom:10}}>
+                        <div style={{display:"flex",height:5,borderRadius:3,overflow:"hidden",gap:1,marginBottom:5}}>
+                          {strongBuy>0&&<div style={{flex:strongBuy,background:"#16A34A"}}/>}
+                          {buy>0&&<div style={{flex:buy,background:"#4ADE80"}}/>}
+                          {hold>0&&<div style={{flex:hold,background:"#F59E0B"}}/>}
+                          {sell>0&&<div style={{flex:sell,background:"#F97316"}}/>}
+                          {strongSell>0&&<div style={{flex:strongSell,background:"#EF4444"}}/>}
+                        </div>
+                        <div style={{display:"flex",gap:8,fontSize:9,flexWrap:"wrap"}}>
+                          {strongBuy>0&&<span style={{color:"#16A34A",fontWeight:600}}>SB {strongBuy}</span>}
+                          {buy>0&&<span style={{color:"#4ADE80",fontWeight:600}}>B {buy}</span>}
+                          {hold>0&&<span style={{color:"#F59E0B",fontWeight:600}}>H {hold}</span>}
+                          {sell>0&&<span style={{color:"#F97316",fontWeight:600}}>S {sell}</span>}
+                          {strongSell>0&&<span style={{color:"#EF4444",fontWeight:600}}>SS {strongSell}</span>}
+                          <span style={{color:T.textSub,marginLeft:"auto"}}>{total} analysts</span>
+                        </div>
+                      </div>);
+                    })()}
+                    {/* Price target range */}
                     {r.target&&(
-                      <div style={{fontSize:11,fontFamily:T.sans}}>
-                        <span style={{color:T.textSub}}>Target </span>
-                        <span style={{color:T.text,fontWeight:600}}>${r.target.toFixed(2)}</span>
-                        {r.upside!==null&&(
-                          <span style={{marginLeft:6,color:r.upside>=0?T.up:T.down,fontWeight:600}}>
-                            {r.upside>=0?"+":""}{r.upside.toFixed(1)}%
-                          </span>
-                        )}
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:5,fontFamily:T.sans}}>12-Month Price Target</div>
+                        {r.targetLow&&r.targetHigh&&r.price>0&&(()=>{
+                          const pct100=Math.max(0,Math.min(100,((r.price-r.targetLow)/(r.targetHigh-r.targetLow))*100));
+                          return(<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+                            <span style={{fontFamily:T.mono,fontSize:9,color:T.down,minWidth:32}}>${r.targetLow<100?r.targetLow.toFixed(1):Math.round(r.targetLow)}</span>
+                            <div style={{flex:1,position:"relative",height:5,background:T.border,borderRadius:3}}>
+                              <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:`linear-gradient(90deg,${T.down}50,${T.up}50)`,borderRadius:3}}/>
+                              <div style={{position:"absolute",top:-4,width:13,height:13,borderRadius:"50%",background:T.text,border:`2px solid ${T.surface}`,left:`calc(${pct100}% - 6px)`,boxShadow:"0 1px 4px rgba(0,0,0,.4)"}}/>
+                            </div>
+                            <span style={{fontFamily:T.mono,fontSize:9,color:T.up,minWidth:32,textAlign:"right"}}>${r.targetHigh<100?r.targetHigh.toFixed(1):Math.round(r.targetHigh)}</span>
+                          </div>);
+                        })()}
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.mono}}>${r.target<100?r.target.toFixed(2):f2(r.target)}</span>
+                          <span style={{fontSize:9,color:T.textSub}}>avg target</span>
+                          {r.upside!==null&&<span style={{fontSize:12,fontWeight:700,color:r.upside>=0?T.up:T.down,marginLeft:4}}>{r.upside>=0?"+":""}{r.upside.toFixed(1)}% {r.upside>=0?"upside":"downside"}</span>}
+                        </div>
                       </div>
                     )}
-                    {r.analysts&&<div style={{fontSize:10,color:T.textSub,marginTop:3,fontFamily:T.sans}}>{r.analysts} analysts</div>}
+                    {/* Key metrics row */}
+                    {(r.pe||r.beta||r.w52h)&&(
+                      <div style={{display:"flex",gap:0,borderTop:`1px solid ${T.border}`,paddingTop:8,flexWrap:"wrap"}}>
+                        {r.pe&&<div style={{flex:1,minWidth:60,padding:"0 8px 0 0"}}>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>Fwd P/E</div>
+                          <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.pe.toFixed(1)}x</div>
+                        </div>}
+                        {r.beta&&<div style={{flex:1,minWidth:60,padding:"0 8px",borderLeft:`1px solid ${T.border}`}}>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>Beta</div>
+                          <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.beta.toFixed(2)}</div>
+                        </div>}
+                        {r.w52h&&<div style={{flex:2,minWidth:100,padding:"0 0 0 8px",borderLeft:`1px solid ${T.border}`}}>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>52W Range</div>
+                          <div style={{fontSize:11,fontWeight:600,fontFamily:T.mono}}><span style={{color:T.down}}>${r.w52l<100?r.w52l?.toFixed(1):Math.round(r.w52l)}</span><span style={{color:T.textSub}}> – </span><span style={{color:T.up}}>${r.w52h<100?r.w52h?.toFixed(1):Math.round(r.w52h)}</span></div>
+                        </div>}
+                      </div>
+                    )}
                   </div>
                 );
               })}
