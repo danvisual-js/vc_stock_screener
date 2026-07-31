@@ -176,32 +176,126 @@ const I={
   News:({s=14,c="currentColor"})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>,
 };
 
+
+/* ════════════════════════════════════════════════════════
+   PHASE 2 HELPERS
+════════════════════════════════════════════════════════ */
+// Time-since label for feed items (compact)
+function tAgo(ts){
+  if(!ts)return"";
+  const d=(Date.now()/1000)-ts;
+  if(d<3600)return`${Math.round(d/60)}m`;
+  if(d<86400)return`${Math.round(d/3600)}h`;
+  return`${Math.round(d/86400)}d`;
+}
+
+// Fetch named analyst upgrade/downgrade history from Yahoo Finance
+async function fetchUpgradesHistory(symbol){
+  try{
+    const url=`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${toYF(symbol)}?modules=upgradesDowngradesHistory`;
+    const d=await yfFetch(url);
+    const hist=d?.quoteSummary?.result?.[0]?.upgradesDowngradesHistory?.history||[];
+    return hist.slice(0,6).map(h=>({
+      firm:h.firm||"",
+      action:h.action||"main",
+      toGrade:h.toGrade||"",
+      fromGrade:h.fromGrade||"",
+      date:new Date((h.epochGradeDate||0)*1000).toLocaleDateString("en-US",{month:"short",day:"numeric"}),
+    }));
+  }catch{return[];}
+}
+
+// Fetch earnings beat/miss history from /api/earnings
+async function fetchEarningsHistory(symbol){
+  try{
+    const r=await fetch(`/api/earnings?symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(7000)});
+    if(!r.ok)return[];
+    return await r.json();
+  }catch{return[];}
+}
+
+// Build intelligence feed items from stocks + news + events
+function buildFeedItems(stocks,news,events,T){
+  const items=[];
+  // 1. Movers
+  (stocks||[]).forEach(s=>{
+    if(!s.p||!s.pc||s.loading)return;
+    const ch=pct(s.p,s.pc);
+    if(Math.abs(ch)<1.5)return;
+    items.push({id:`mv-${s.s}`,type:ch>0?"up":"down",color:ch>0?T.up:T.down,
+      icon:ch>0?"▲":"▼",sym:s.s,
+      title:`${s.s} ${ch>0?"+":""}${ch.toFixed(2)}% today`,
+      detail:`$${f2(s.p)}`,time:"Live",priority:Math.min(Math.abs(ch)*12,100)});
+  });
+  // 2. Upcoming earnings
+  (events?.earnings||[]).slice(0,5).forEach(e=>{
+    const parts=[
+      e.epsEst!=null?`Est. EPS $${e.epsEst}`:null,
+      e.revEst!=null?`Rev $${e.revEst}B`:null,
+      e.when,
+      e.beatRate!=null?`${e.beatRate}% beat rate`:null,
+    ].filter(Boolean);
+    items.push({id:`earn-${e.s}`,type:"earnings",color:"#F59E0B",
+      icon:"📅",sym:e.s,
+      title:`${e.s} earnings · ${e.date}`,
+      detail:parts.join(" · "),time:e.date,priority:55});
+  });
+  // 3. Macro events
+  (events?.macro||[]).slice(0,2).forEach(e=>{
+    items.push({id:`mac-${e.event}`,type:"macro",color:"#A78BFA",
+      icon:"◎",title:e.event,
+      detail:`${e.impact==="high"?"High impact":"Market event"} · ${e.date}`,
+      time:e.date,priority:25});
+  });
+  // 4. News
+  (news||[]).slice(0,6).forEach((n,i)=>{
+    const col=n.sentiment==="positive"?T.up:n.sentiment==="negative"?T.down:T.textSub;
+    items.push({id:`news-${i}`,type:"news",color:col,
+      icon:n.sentiment==="positive"?"↑":n.sentiment==="negative"?"↓":"·",
+      title:n.h,detail:n.publisher||"",
+      time:tAgo(n.time),url:n.url,priority:20-i});
+  });
+  return items.sort((a,b)=>b.priority-a.priority);
+}
+
 /* ════════════════════════════════════════════════════
    THEMES — Yahoo Finance / iOS Finance aesthetic
 ════════════════════════════════════════════════════ */
 const DARK = {
-  bg:"#0D0D0F",surface:"#1A1A1E",surfaceB:"#242428",
-  border:"#2C2C30",up:"#00D084",down:"#FF4560",accent:"#4F8EF7",
-  text:"#F1F5F9",textSub:"#94A3B8",textTert:"#475569",
-  mono:"'SF Mono','Fira Code','Consolas',monospace",
-  sans:"-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
-  ema9:"#F59E0B",ema20:"#60A5FA",ema50:"#C084FC",
-  chartGrid:"#1E1E22",
+  // Dark grey base — subtle indigo/purple accent only (not purple background)
+  bg:        "#08090E",   // near-black (same as V2 proposal)
+  surface:   "#0F1018",   // dark blue-grey card
+  surfaceB:  "#161820",   // slightly raised surface
+  border:    "#1E2334",   // dark blue-grey border
+  // Accent: indigo/purple for interactive elements only
+  accent:    "#6366F1",   // indigo — tabs, active states, CTAs
+  up:        "#00D084",   down:"#FF4560",
+  text:      "#F1F5F9",   textSub:"#64748B",  textTert:"#1E293B",
+  mono:      "'SF Mono','Fira Code','Consolas',monospace",
+  sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
+  ema9:      "#F59E0B",   ema20:"#60A5FA",  ema50:"#C084FC",
+  chartGrid: "#1A1D2E",
   insightBg:"#0F172A",insightBorder:"#1E3A5F",insightText:"#93C5FD",
-  upBg:"#00D08420",downBg:"#FF456020",accentBg:"#4F8EF715",
-  shadow:"0 1px 3px rgba(0,0,0,0.4)",
+  upBg:"#00D08420",downBg:"#FF456020",accentBg:"#6366F118",
+  shadow:    "0 2px 8px rgba(0,0,0,0.5)",
+  // Subtle purple glow on selected card — the only purple touch
+  accentGlow:"0 0 0 1.5px #6366F170, 0 4px 16px rgba(99,102,241,0.2)",
+  headerGrad:"linear-gradient(180deg,#0E1028 0%,#08090E 100%)",
 };
 const LIGHT = {
-  bg:"#F2F2F7",surface:"#FFFFFF",surfaceB:"#F8F9FA",
-  border:"#E5E5EA",up:"#00B386",down:"#E74C3C",accent:"#0066FF",
-  text:"#1C1C1E",textSub:"#6C757D",textTert:"#ADB5BD",
-  mono:"'SF Mono','Fira Code','Consolas',monospace",
-  sans:"-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
-  ema9:"#D97706",ema20:"#2563EB",ema50:"#7C3AED",
-  chartGrid:"#F0F0F5",
+  bg:        "#F2F2F7",   surface:"#FFFFFF",  surfaceB:"#F8F9FA",
+  border:    "#E5E5EA",   accent:"#6355E8",
+  up:        "#00B386",   down:"#E74C3C",
+  text:      "#1C1C1E",   textSub:"#6C757D",  textTert:"#ADB5BD",
+  mono:      "'SF Mono','Fira Code','Consolas',monospace",
+  sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
+  ema9:      "#D97706",   ema20:"#2563EB",  ema50:"#7C3AED",
+  chartGrid: "#F0F0F5",
   insightBg:"#EFF6FF",insightBorder:"#BFDBFE",insightText:"#1D4ED8",
-  upBg:"#00B38618",downBg:"#E74C3C18",accentBg:"#0066FF0D",
-  shadow:"0 1px 3px rgba(0,0,0,0.08)",
+  upBg:"#00B38618",downBg:"#E74C3C18",accentBg:"#6355E812",
+  shadow:    "0 1px 4px rgba(0,0,0,0.08)",
+  accentGlow:"0 0 0 1.5px #6355E860",
+  headerGrad:"linear-gradient(180deg,#F5F4FF 0%,#F2F2F7 100%)",
 };
 
 /* ════════════════════════════════════════════════════
@@ -364,18 +458,20 @@ const fromYF = s => s;
 
 // Fetch through a CORS proxy — tries two services for reliability
 async function yfFetch(url){
-  // Try our server proxy first (most reliable), then CORS proxies as fallback
   try{
     const r=await fetch("/api/yf?url="+encodeURIComponent(url),{signal:AbortSignal.timeout(9000)});
-    if(r.ok){const d=await r.json();if(d&&!d.error)return d;}
+    if(r.ok){
+      const d=await r.json();
+      // Reject YF error responses (chart error or top-level error)
+      if(d&&!d.error&&!d.chart?.error)return d;
+    }
   }catch{}
-  // CORS proxy fallbacks
   for(const p of["https://corsproxy.io/?"+encodeURIComponent(url),"https://api.allorigins.win/raw?url="+encodeURIComponent(url)]){
     try{
       const r=await fetch(p,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(7000)});
       if(!r.ok)continue;
       const txt=await r.text();
-      if(txt&&txt.length>20)return JSON.parse(txt);
+      if(txt&&txt.length>20){const d=JSON.parse(txt);if(!d.chart?.error)return d;}
     }catch{}
   }
   return null;
@@ -401,40 +497,69 @@ async function fetchYFQuotes(symbols){
 
 // Timeframe → Yahoo Finance interval + range
 const YF_TF={
-  "1m": {interval:"1m", range:"1d"},
-  "5m": {interval:"5m", range:"5d"},
-  "15m":{interval:"15m",range:"5d"},
-  "1h": {interval:"60m",range:"5d"},
-  "1W": {interval:"1d", range:"5d"},
-  "1M": {interval:"1d", range:"1mo"},
-  "3M": {interval:"1d", range:"3mo"},
-  "6M": {interval:"1d", range:"6mo"},
-  "1Y": {interval:"1d", range:"1y"},
+  // intraday: prePost=true extends hours 4am–8pm ET
+  // Only valid YF ranges: 1d 5d 1mo 3mo 6mo 1y 2y 5y 10y ytd max
+  "1m": {interval:"1m",  range:"1d",  prePost:true,  barMin:1},
+  "5m": {interval:"5m",  range:"5d",  prePost:true,  barMin:5},
+  "15m":{interval:"15m", range:"1mo", prePost:true,  barMin:15},
+  "30m":{interval:"30m", range:"1mo", prePost:true,  barMin:30},
+  "1h": {interval:"60m", range:"3mo", prePost:true,  barMin:60},
+  "4h": {interval:"60m", range:"3mo", prePost:false, barMin:60},
+  // daily / historical
+  "1W": {interval:"1d",  range:"5d",  prePost:false, barMin:1440},
+  "1M": {interval:"1d",  range:"1mo", prePost:false, barMin:1440},
+  "3M": {interval:"1d",  range:"3mo", prePost:false, barMin:1440},
+  "6M": {interval:"1d",  range:"6mo", prePost:false, barMin:1440},
+  "1Y": {interval:"1d",  range:"1y",  prePost:false, barMin:1440},
 };
 
 // Real OHLCV chart bars from Yahoo Finance
 async function fetchYFChart(symbol, tf){
-  const {interval,range}=YF_TF[tf]||YF_TF["5m"];
-  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${toYF(symbol)}?interval=${interval}&range=${range}&includePrePost=false`;
-  try{
+  const cfg=YF_TF[tf]||YF_TF["5m"];
+  const {interval,range,prePost,barMin}=cfg;
+  const base=`https://query1.finance.yahoo.com/v8/finance/chart/${toYF(symbol)}?interval=${interval}&range=${range}`;
+  // Try regular session first (most reliable from Vercel IPs)
+  // Then try with pre/post market if supported
+  const urls=[base];
+  if(prePost)urls.push(base+"&includePrePost=true"); // appended as fallback
+  for(const url of urls.slice().reverse()){ // try prePost first, fallback to regular
+    try{
     const data=await yfFetch(url);
     const res=data?.chart?.result?.[0];
     if(!res)return null;
     const ts=res.timestamp||[];
     const q=res.indicators?.quote?.[0]||{};
-    const isIntra=["1m","5m","15m","1h"].includes(tf);
+    const isIntra=barMin<1440;
+    const multiDay=range!=="1d";
+    // ET offset — use UTC-4 (EDT covers most of the trading year)
+    const ET_OFF=4*3600; // seconds
+    let prevDayStr="";
     const bars=ts.map((t,i)=>{
-      const open=q.open?.[i]||0, close=q.close?.[i]||0;
-      const high=q.high?.[i]||0,  low=q.low?.[i]||0;
+      const open=q.open?.[i]||0,close=q.close?.[i]||0;
+      const high=q.high?.[i]||0,low=q.low?.[i]||0;
       const volume=q.volume?.[i]||0;
+      if(!close||!high)return null;
+      // Robust ET time using raw UTC offset (no Intl timezone needed)
+      const etTs=t-ET_OFF;
+      const etH=Math.floor((etTs%86400)/3600);
+      const etM=Math.floor((etTs%3600)/60);
+      const etMins=etH*60+etM;
+      const isExtended=isIntra&&(etMins<570||etMins>=960);
+      // Display labels
       const d=new Date(t*1000);
-      const label=isIntra
-        ?d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})
-        :d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
-      return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open};
-    }).filter(b=>b.close>0&&b.high>0);
+      const dayLabel=d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+      const timeLabel=`${etH===0||etH===12?12:etH%12}:${String(etM).padStart(2,"0")} ${etH<12?"AM":"PM"}`;
+      let label;
+      if(!isIntra){label=dayLabel;}
+      else if(multiDay&&!isExtended&&dayLabel!==prevDayStr){label=dayLabel;}
+      else{label=timeLabel;}
+      if(!isExtended)prevDayStr=dayLabel;
+      return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
+    }).filter(Boolean);
     return bars.length>5?bars:null;
-  }catch{return null;}
+    }catch(e){console.warn("chart attempt failed:",e);}
+  }
+  return null;
 }
 async function fetchPrices(symbols){
   if(!symbols.length)return{};
@@ -609,23 +734,24 @@ function genBars(price, chPct, barMin, n){
   }));
 }
 
-// Timeframe config: barMin (minutes per candle) + n (number of bars)
+// Timeframe config — barMin used for findSR threshold + ChartControls grouping
 const TIMEFRAMES={
-  "1m": {barMin:1,   n:390, group:"Intraday"},
-  "5m": {barMin:5,   n:78,  group:"Intraday"},
-  "15m":{barMin:15,  n:26,  group:"Intraday"},
-  "30m":{barMin:30,  n:13,  group:"Intraday"},
-  "1h": {barMin:60,  n:7,   group:"Intraday"},
-  "4h": {barMin:240, n:7,   group:"Intraday"},
-  "1W": {barMin:1440,n:5,   group:"History"},
-  "1M": {barMin:1440,n:30,  group:"History"},
-  "3M": {barMin:1440,n:90,  group:"History"},
-  "6M": {barMin:1440,n:180, group:"History"},
-  "1Y": {barMin:1440,n:365, group:"History"},
+  "1m": {barMin:1,   group:"Intraday"},
+  "5m": {barMin:5,   group:"Intraday"},
+  "15m":{barMin:15,  group:"Intraday"},
+  "30m":{barMin:30,  group:"Intraday"},
+  "1h": {barMin:60,  group:"Intraday"},
+  "4h": {barMin:60,  group:"Intraday"}, // 60m bars, 3mo range
+  "1W": {barMin:1440,group:"History"},
+  "1M": {barMin:1440,group:"History"},
+  "3M": {barMin:1440,group:"History"},
+  "6M": {barMin:1440,group:"History"},
+  "1Y": {barMin:1440,group:"History"},
 };
 
 function getChartData(price,chPct,tf){
-  const {barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];
+  const {barMin}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];
+  const n={"1m":390,"5m":78,"15m":26,"30m":13,"1h":7,"4h":7}[tf]||30;
   return enrich(genBars(price,chPct,barMin,n));
 }
 
@@ -736,6 +862,18 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onMM=(e)=>{if(!drag.current.on)return;const rect=divRef.current?.getBoundingClientRect();if(!rect)return;const vis=drag.current.e0-drag.current.s0;const sh=Math.round((drag.current.x0-e.clientX)/(rect.width/vis));const ns=Math.max(0,drag.current.s0+sh);const ne=Math.min(data.length,drag.current.e0+sh);if(ne-ns===vis){setVS(ns);setVE(ne);}};
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
+
+  // Crosshair state
+  const [hoverI,setHoverI]=useState(null);
+  const onSVGMove=(e)=>{
+    const rect=divRef.current?.getBoundingClientRect();
+    if(!rect)return;
+    const xInChart=e.clientX-rect.left;
+    const pctX=(xInChart-Pad.l)/W;
+    const idx=Math.floor(pctX*visData.length);
+    setHoverI(idx>=0&&idx<visData.length?idx:null);
+  };
+  const onSVGLeave=()=>setHoverI(null);
   const VW=900,VH=210,Pad={t:8,r:44,b:22,l:54};
   const W=VW-Pad.l-Pad.r,H=VH-Pad.t-Pad.b;
   if(!visData.length)return null;
@@ -749,18 +887,65 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const fY=p=>p>=10000?(p/1000).toFixed(0)+"K":p>=100?p.toFixed(0):p<1?p.toFixed(3):p.toFixed(2);
   const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
   return(
-    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}} onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={onMU} onDoubleClick={resetZoom}>
-      {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:"#0F1018",border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
+    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}} onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);}} onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}} onDoubleClick={resetZoom}>
+      {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
         {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
-        {visData.map((d,i)=>{const color=d.isGreen?T.up:T.down;const bT=sy(Math.max(d.open,d.close)),bB=sy(Math.min(d.open,d.close));return(<g key={i}><line x1={sx(i)} x2={sx(i)} y1={sy(d.high)} y2={sy(d.low)} stroke={color} strokeWidth={0.8} opacity={0.55}/><rect x={sx(i)-cw/2} y={bT} width={cw} height={Math.max(bB-bT,1)} fill={color} fillOpacity={d.isGreen?0.2:0.45} stroke={color} strokeWidth={0.8}/></g>);})}
+        {/* Session boundary lines + candles */}
+        {visData.map((d,i)=>{
+          const color=d.isGreen?T.up:T.down;
+          const bT=sy(Math.max(d.open,d.close)),bB=sy(Math.min(d.open,d.close));
+          const ext=d.isExtended;
+          const prevExt=i>0?visData[i-1].isExtended:d.isExtended;
+          return(<g key={i}>
+            {/* Vertical session-boundary marker */}
+            {i>0&&prevExt!==ext&&(
+              <line x1={sx(i)-cw} x2={sx(i)-cw} y1={Pad.t} y2={Pad.t+H}
+                stroke={T.border} strokeWidth={0.8} strokeDasharray="2,3" opacity={0.7}/>
+            )}
+            {/* Candle wick */}
+            <line x1={sx(i)} x2={sx(i)} y1={sy(d.high)} y2={sy(d.low)}
+              stroke={color} strokeWidth={0.8} opacity={ext?0.3:0.55}/>
+            {/* Candle body */}
+            <rect x={sx(i)-cw/2} y={bT} width={cw} height={Math.max(bB-bT,1)}
+              fill={color} fillOpacity={ext?0.08:d.isGreen?0.2:0.45}
+              stroke={color} strokeWidth={0.8} opacity={ext?0.4:1}/>
+          </g>);
+        })}
         {showEMA&&<>{eLine("ema9",T.ema9,"4,3")}{eLine("ema20",T.ema20,"")}{eLine("ema50",T.ema50,"")}</>}
         {showBB&&(()=>{const pts=(k)=>visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean);const up=pts("bbUpper"),lo=pts("bbLower");if(!up.length)return null;return(<g><path d={`M${up.join(" L")} L${lo.slice().reverse().join(" L")} Z`} fill="#A78BFA" fillOpacity={0.07}/>{[["bbUpper","#A78BFA","3,2"],["bbMiddle","#A78BFA50",""],["bbLower","#A78BFA","3,2"]].map(([k,c,dash])=>(<polyline key={k} points={visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean).join(" ")} fill="none" stroke={c} strokeWidth={1} strokeDasharray={dash} opacity={0.9}/>))}</g>);})()}
         {showVWAP&&<>{eLine("vwap","#60A5FA","",1.5)}</>}
         {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
         {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
         {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
+        {/* ── Crosshair ─────────────────────────────────── */}
+        {hoverI!=null&&visData[hoverI]&&(()=>{
+          const bar=visData[hoverI];
+          const cx=sx(hoverI);
+          const tip={o:bar.open?.toFixed(2),h:bar.high?.toFixed(2),l:bar.low?.toFixed(2),c:bar.close?.toFixed(2),v:bar.volume?(bar.volume/1e6).toFixed(2)+"M":"—"};
+          // Tooltip box — flip to left half if near right edge
+          const tipW=140,tipH=74,tipX=cx+8>VW-Pad.r-tipW?cx-tipW-8:cx+8;
+          const tipY=Pad.t+4;
+          return(
+            <g style={{pointerEvents:"none"}}>
+              {/* Vertical crosshair line */}
+              <line x1={cx} x2={cx} y1={Pad.t} y2={Pad.t+H} stroke={bar.isGreen?T.up:T.down} strokeWidth={0.7} strokeDasharray="3,3" opacity={0.6}/>
+              {/* Price label on right axis */}
+              <rect x={Pad.l+W} y={sy(bar.close)-9} width={Pad.r-2} height={18} rx={3} fill={bar.isGreen?T.up:T.down}/>
+              <text x={Pad.l+W+(Pad.r-2)/2} y={sy(bar.close)+1} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700} dominantBaseline="middle">{fY(bar.close)}</text>
+              {/* OHLCV tooltip box */}
+              <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={5} fill={T.surface} stroke={T.border} strokeWidth={0.8} opacity={0.96}/>
+              <text x={tipX+8} y={tipY+12} fill={T.textSub} fontSize={8} fontFamily="monospace">{bar.date}</text>
+              {[["O",tip.o],["H",tip.h],["L",tip.l],["C",tip.c],["V",tip.v]].map(([lbl,val],i)=>(
+                <g key={lbl}>
+                  <text x={tipX+8+(i<4?i*26:0)} y={tipY+(i<4?30:52)} fill={lbl==="H"?T.up:lbl==="L"?T.down:lbl==="C"?bar.isGreen?T.up:T.down:T.textSub} fontSize={8} fontFamily="monospace" fontWeight={700}>{lbl}</text>
+                  <text x={tipX+8+(i<4?i*26:0)+8} y={tipY+(i<4?30:52)} fill={T.text} fontSize={8} fontFamily="monospace">{val}</text>
+                </g>
+              ))}
+            </g>
+          );
+        })()}
       </svg>
     </div>
   );
@@ -794,7 +979,7 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
   const fY=v=>v>=10000?(v/1000).toFixed(0)+"K":v>=100?v.toFixed(0):v.toFixed(2);
   return(
     <div ref={divRef} style={{position:"relative"}} onDoubleClick={resetZoom}>
-      {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:4,right:8,zIndex:10,background:"#0F1018",border:"1px solid #1E2334",borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>↺ {brushE-brushS+1}/{data.length}</div>}
+      {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:4,right:8,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace",lineHeight:1.6}}>↺ {brushE-brushS+1}/{data.length}</div>}
       <ResponsiveContainer width="100%" height={height+20}>
         <ComposedChart data={sigChartData.d} margin={{top:6,right:8,left:0,bottom:0}}>
           <defs><linearGradient id={`grad-${col.replace("#","")}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={col} stopOpacity={0.15}/><stop offset="95%" stopColor={col} stopOpacity={0}/></linearGradient></defs>
@@ -907,6 +1092,13 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       {chip(ind.rsi,       T.ema9,  "RSI",       ()=>toggleInd("rsi"))}
       {chip(ind.signals,   "#F43F5E","Signals",   ()=>toggleInd("signals"))}
       {chip(ind.volProfile,"#F59E0B","VP",        ()=>toggleInd("volProfile"),chartMode!=="candle")}
+      {TIMEFRAMES[tf]?.group==="Intraday"&&(
+        <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:8,
+          background:"#6366F118",color:"#818CF8",border:"1px solid #6366F130",
+          letterSpacing:".05em",whiteSpace:"nowrap"}}>
+          Pre+Post
+        </span>
+      )}
     </div>
   );
 }
@@ -966,118 +1158,220 @@ function IndexChart({index,T}){
 /* ════════════════════════════════════════════════════
    MARKET HERO — indices + news accordion + events
 ════════════════════════════════════════════════════ */
-function MarketHero({T,selectedIdx,onSelectIdx,symbols,indices,news,refreshing}){
+/* ════════════════════════════════════════════════════════
+   INTELLIGENCE FEED — personalized stream for your watchlist
+════════════════════════════════════════════════════════ */
+function IntelligenceFeed({stocks,news,symbols,T}){
   const [events,setEvents]=useState(null);
-  const [newsOpen,setNewsOpen]=useState(false);
-
   useEffect(()=>{
-    // Show hardcoded macro events immediately while earnings load
-    setEvents({
-      earnings:[],
-      macro:KNOWN_EVENTS.macro.slice(0,4),
-    });
-    // Fetch live earnings calendar from Finnhub
+    setEvents({earnings:[],macro:KNOWN_EVENTS.macro.slice(0,3)});
     fetch(`/api/events?symbols=${encodeURIComponent(symbols.join(","))}`)
-      .then(r=>r.ok?r.json():[])
-      .then(live=>{
+      .then(r=>r.ok?r.json():[]).then(live=>{
         setEvents({
-          earnings:(live.length
-            ? live
-            : KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s))
-          ).slice(0,8),
-          macro:KNOWN_EVENTS.macro.slice(0,4),
+          earnings:(live.length?live:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s))).slice(0,6),
+          macro:KNOWN_EVENTS.macro.slice(0,3),
         });
-  
-      {ind.rsi&&(()=>{const last=data.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{marginTop:8}}><div style={{fontSize:8,color:T.textSub,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={data} T={T}/></div>);})()}    })
-      .catch(()=>{
-        setEvents({
-          earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,6),
-          macro:KNOWN_EVENTS.macro.slice(0,4),
-        });
-      });
-  },[symbols.join(",")]);
+      }).catch(()=>setEvents({
+        earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,4),
+        macro:KNOWN_EVENTS.macro.slice(0,3),
+      }));
+  },[symbols.join(",")]);// eslint-disable-line
 
-  const sentC=s=>s==="bullish"?T.up:s==="bearish"?T.down:T.textSub;
-  const sentI=s=>s==="bullish"?"↑":s==="bearish"?"↓":"→";
-  const impC=i=>i==="high"?T.down:i==="med"?T.ema9:T.textSub;
+  const items=useMemo(()=>buildFeedItems(stocks,news,events,T),[stocks,news,events,T]);
+
+  const TYPE_BG={up:`${T.up}0A`,down:`${T.down}0A`,earnings:"#F59E0B0A",macro:"#A78BFA0A",news:"transparent"};
 
   return(
-    <div>
-      {/* Index tiles */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
-        {indices.map(idx=>{
-          const ch=pct(idx.p,idx.pc),isUp=ch>=0,isSel=selectedIdx?.s===idx.s;
-          return(
-            <div key={idx.s} onClick={()=>onSelectIdx(isSel?null:idx)} style={{
-              background:T.surface,borderRadius:12,padding:"12px 12px",cursor:"pointer",
-              border:`1px solid ${isSel?T.accent:T.border}`,
-              borderTop:`3px solid ${isSel?T.accent:isUp?T.up:T.down}`,
-              boxShadow:isSel?`0 0 0 2px ${T.accent}30`:T.shadow,
-              transition:"all 0.15s",
-            }}>
-              <div style={{fontSize:9,color:T.textSub,fontWeight:500,marginBottom:4,fontFamily:T.sans,textTransform:"uppercase",letterSpacing:"0.04em"}}>{idx.name}</div>
-              <div style={{fontSize:15,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums",marginBottom:4}}>{fN(idx.p)}</div>
-              <DailyChange p={idx.p} pc={idx.pc} T={T} size="sm"/>
-            </div>
-          );
-        })}
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:14,boxShadow:T.shadow}}>
+      {/* Header */}
+      <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`${T.accent}08`}}>
+        <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
+          <I.TrendUp s={12} c={T.accent}/>Market Intelligence
+        </span>
+        <span style={{fontSize:9,color:T.textSub,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase"}}>Your Watchlist</span>
       </div>
 
-      {/* News + Events row */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-
-        {/* Trending News accordion */}
-        <div style={{background:T.surface,borderRadius:12,padding:"14px 16px",border:`1px solid ${T.border}`,boxShadow:T.shadow}}>
-          <div style={{fontSize:10,fontWeight:700,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10,fontFamily:T.sans}}>Trending</div>
-          {refreshing&&!news.length&&<div style={{fontSize:12,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</div>}
-          {news.length>0&&<>
-            {(newsOpen?news:news.slice(0,2)).map((n,i)=>(
-              <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:10,paddingBottom:i<(newsOpen?news:news.slice(0,2)).length-1?10:0,borderBottom:i<(newsOpen?news:news.slice(0,2)).length-1?`1px solid ${T.border}`:"none"}}>
-                <span style={{fontSize:13,color:sentC(n.sentiment||"neutral"),flexShrink:0,marginTop:1}}>{sentI(n.sentiment||"neutral")}</span>
-                <div style={{minWidth:0}}>
-                  {n.url
-                    ?<a href={n.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:T.text,lineHeight:1.45,fontFamily:T.sans,textDecoration:"none",display:"block"}}>{n.h}</a>
-                    :<span style={{fontSize:12,color:T.text,lineHeight:1.45,fontFamily:T.sans}}>{n.h}</span>
-                  }
-                  {n.publisher&&<div style={{fontSize:9,color:T.textSub,marginTop:2,fontFamily:T.sans}}>{n.publisher}{n.time?` · ${new Date(n.time*1000).toLocaleDateString()}`:""}</div>}
-                </div>
+      {/* Feed items */}
+      <div style={{maxHeight:360,overflowY:"auto"}}>
+        {!items.length&&(
+          <div style={{padding:"16px 14px",fontSize:11,color:T.textSub}}>Loading market data…</div>
+        )}
+        {items.map((item,i)=>(
+          <a key={item.id} href={item.url||undefined} target={item.url?"_blank":undefined} rel="noreferrer"
+            style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 14px",
+              borderBottom:i<items.length-1?`1px solid ${T.border}`:"none",
+              textDecoration:"none",background:TYPE_BG[item.type]||"transparent",cursor:item.url?"pointer":"default"}}>
+            {/* Colored left pip + icon */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:3,flexShrink:0}}>
+              <div style={{width:3,height:3,borderRadius:"50%",background:item.color,marginBottom:3}}/>
+              <span style={{fontSize:11,color:item.color,fontWeight:700,lineHeight:1}}>{item.icon}</span>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,color:T.text,fontWeight:item.sym?600:400,lineHeight:1.4,marginBottom:1}}>
+                {item.sym&&<span style={{fontFamily:"monospace",marginRight:4,color:T.accent}}>{item.sym}</span>}
+                {item.title.replace(item.sym+" ","").replace(item.sym+"·","").trim()}
               </div>
-            ))}
-            {news.length>2&&(
-              <button onClick={()=>setNewsOpen(v=>!v)} style={{fontSize:11,color:T.accent,background:"none",border:"none",cursor:"pointer",padding:0,fontWeight:600,fontFamily:T.sans}}>
-                {newsOpen?`Show less ▲`:`+${news.length-2} more ▼`}
-              </button>
-            )}
-          </>}
-          {!refreshing&&!news.length&&<div style={{fontSize:11,color:T.textSub,fontFamily:T.sans}}>Tap an index tile to see its chart.</div>}
-        </div>
-
-        {/* Events */}
-        <div style={{background:T.surface,borderRadius:12,padding:"14px 16px",border:`1px solid ${T.border}`,boxShadow:T.shadow}}>
-          <div style={{fontSize:10,fontWeight:700,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10,fontFamily:T.sans}}>Upcoming Events</div>
-          {events&&(()=>{
-            const allEv=[
-              ...(events.earnings||[]).map(e=>({...e,type:"earnings",label:e.s,sub:e.when||""})),
-              ...(events.macro||[]).map(m=>({...m,type:"macro",label:m.event,sub:m.impact+" impact"})),
-            ].sort((a,b)=>parseDate(a.date)-parseDate(b.date)).slice(0,6);
-            return allEv.map((e,i)=>(
-              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{display:"flex",gap:6,alignItems:"center",minWidth:0}}>
-                  <span style={{fontSize:10,flexShrink:0}}>{e.type==="earnings"?<I.BarChart s={11}/>:<I.TrendUp s={11}/>}</span>
-                  <div style={{minWidth:0}}>
-                    <span style={{fontFamily:e.type==="earnings"?T.mono:T.sans,fontSize:11,fontWeight:700,color:T.text}}>{e.label}</span>
-                    {e.sub&&<span style={{fontSize:9,color:T.textSub,marginLeft:4,fontFamily:T.sans}}>{e.sub}</span>}
-                  </div>
-                </div>
-                <span style={{fontSize:10,color:T.accent,fontWeight:600,fontFamily:T.sans,flexShrink:0,marginLeft:6}}>{e.date}</span>
-              </div>
-            ));
-          })()}
-        </div>
+              {item.detail&&<div style={{fontSize:10,color:T.textSub,lineHeight:1.3}}>{item.detail}</div>}
+            </div>
+            <span style={{fontSize:9,color:T.textSub,fontWeight:500,flexShrink:0,paddingTop:2,whiteSpace:"nowrap"}}>{item.time}</span>
+          </a>
+        ))}
       </div>
     </div>
   );
 }
+
+/* ════════════════════════════════════════════════════════
+   MARKET BAR  (slim top strip, replaces index cards)
+════════════════════════════════════════════════════════ */
+function MarketBar({indices,selectedIdx,onSelectIdx,T}){
+  const session=getMarketSession();
+  const cfg=SESSION_CFG[session]||SESSION_CFG.closed;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:0,background:T.headerGrad||T.surface,
+      borderBottom:`1px solid ${T.border}`,padding:"0 0 0 0",
+      overflowX:"auto",WebkitOverflowScrolling:"touch",scrollbarWidth:"none",
+      marginBottom:14}}>
+      {indices.map((idx,i)=>{
+        const ch=pct(idx.p,idx.pc),isUp=ch>=0,isSel=selectedIdx?.s===idx.s;
+        return(
+          <button key={idx.s} onClick={()=>onSelectIdx(isSel?null:idx)}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"9px 18px",
+              background:isSel?`${isUp?T.up:T.down}12`:"transparent",
+              border:"none",borderRight:`1px solid ${T.border}`,
+              borderBottom:isSel?`2px solid ${T.accent}`:"2px solid transparent",
+              cursor:"pointer",transition:"all 0.12s",whiteSpace:"nowrap",flexShrink:0}}>
+            <span style={{fontSize:11,fontWeight:600,color:T.textSub,letterSpacing:".02em"}}>{idx.name}</span>
+            <span style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:"var(--mono,monospace)",fontVariantNumeric:"tabular-nums"}}>
+              {idx.p?fN(idx.p):"—"}
+            </span>
+            {idx.p>0&&<span style={{fontSize:11,fontWeight:700,color:isUp?T.up:T.down}}>
+              {isUp?"▲":"▼"}{Math.abs(ch).toFixed(2)}%
+            </span>}
+          </button>
+        );
+      })}
+      {/* Session badge — right side */}
+      <div style={{marginLeft:"auto",padding:"0 16px",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+        <span style={{width:6,height:6,borderRadius:3,background:cfg.color,display:"inline-block",
+          boxShadow:session==="open"?`0 0 6px ${cfg.color}`:"none"}}/>
+        <span style={{fontSize:10,fontWeight:600,color:cfg.color,letterSpacing:".04em"}}>{cfg.label}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════
+   MARKET HERO  (news + events below the bar)
+════════════════════════════════════════════════════════ */
+function MarketHero({T,symbols,news,refreshing}){
+  const [events,setEvents]=useState(null);
+  useEffect(()=>{
+    setEvents({earnings:[],macro:KNOWN_EVENTS.macro.slice(0,4)});
+    fetch(`/api/events?symbols=${encodeURIComponent(symbols.join(","))}`)
+      .then(r=>r.ok?r.json():[])
+      .then(live=>{setEvents({
+        earnings:(live.length?live:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s))).slice(0,8),
+        macro:KNOWN_EVENTS.macro.slice(0,4),
+      });}).catch(()=>{setEvents({
+        earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,6),
+        macro:KNOWN_EVENTS.macro.slice(0,4),
+      });});
+  },[symbols.join(",")]);// eslint-disable-line
+
+  const [newsOpen,setNewsOpen]=useState(true);
+  const [evOpen,setEvOpen]=useState(true);
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+      {/* Trending news */}
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",boxShadow:T.shadow}}>
+        <div onClick={()=>setNewsOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",cursor:"pointer",userSelect:"none"}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
+            <I.News s={12} c={T.textSub}/>Trending News
+          </span>
+          {newsOpen?<I.ChevronUp s={11} c={T.textSub}/>:<I.ChevronDown s={11} c={T.textSub}/>}
+        </div>
+        {newsOpen&&(
+          <div style={{borderTop:`1px solid ${T.border}`}}>
+            {!news.length
+              ?<div style={{padding:"10px 14px",fontSize:11,color:T.textSub}}>{refreshing?"Loading news…":"No news"}</div>
+              :news.slice(0,5).map((n,i)=>(
+                <a key={i} href={n.url||"#"} target="_blank" rel="noreferrer"
+                  style={{display:"flex",gap:8,padding:"9px 14px",borderBottom:i<4?`1px solid ${T.border}`:"none",textDecoration:"none",cursor:"pointer",'&:hover':{background:T.surfaceB}}}>
+                  <span style={{fontSize:13,flexShrink:0,marginTop:1,color:n.sentiment==="positive"?T.up:n.sentiment==="negative"?T.down:T.textSub}}>
+                    {n.sentiment==="positive"?"↑":n.sentiment==="negative"?"↓":"·"}
+                  </span>
+                  <div>
+                    <div style={{fontSize:11,color:T.text,lineHeight:1.4,marginBottom:2}}>{n.h}</div>
+                    <div style={{fontSize:9,color:T.textSub}}>{n.publisher}{n.time?` · ${new Date(n.time*1000).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`:""}</div>
+                  </div>
+                </a>
+              ))
+            }
+          </div>
+        )}
+      </div>
+
+      {/* Upcoming events */}
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",boxShadow:T.shadow}}>
+        <div onClick={()=>setEvOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",cursor:"pointer",userSelect:"none"}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
+            <I.BarChart s={12} c={T.textSub}/>Upcoming Events
+          </span>
+          {evOpen?<I.ChevronUp s={11} c={T.textSub}/>:<I.ChevronDown s={11} c={T.textSub}/>}
+        </div>
+        {evOpen&&events&&(
+          <div style={{borderTop:`1px solid ${T.border}`}}>
+            {[...events.earnings,...events.macro].slice(0,6).map((e,i,arr)=>(
+              <div key={i} style={{padding:"9px 14px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    {e.s?<I.BarChart s={10} c={T.textSub}/>:<I.TrendUp s={10} c={T.textSub}/>}
+                    <span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:e.s?T.mono:T.sans}}>{e.s||e.event}</span>
+                    {e.when&&<span style={{fontSize:9,color:T.textSub,background:T.surfaceB,padding:"1px 5px",borderRadius:4,fontWeight:600}}>{e.when}</span>}
+                    {e.impact&&<span style={{fontSize:9,color:e.impact==="high"?T.down:"#F59E0B",fontWeight:700,textTransform:"uppercase",letterSpacing:".05em"}}>{e.impact}</span>}
+                  </div>
+                  <span style={{fontSize:10,color:T.textSub,fontWeight:500,flexShrink:0}}>{e.date}</span>
+                </div>
+                {/* Earnings expectations row */}
+                {e.s&&(e.epsEst!=null||e.beatRate!=null)&&(
+                  <div style={{display:"flex",gap:10,marginTop:4,flexWrap:"wrap"}}>
+                    {e.epsEst!=null&&(
+                      <span style={{fontSize:10,color:T.textSub}}>
+                        EPS est <span style={{color:T.text,fontFamily:T.mono,fontWeight:600}}>${e.epsEst}</span>
+                      </span>
+                    )}
+                    {e.revEst!=null&&(
+                      <span style={{fontSize:10,color:T.textSub}}>
+                        Rev est <span style={{color:T.text,fontFamily:T.mono,fontWeight:600}}>${e.revEst}B</span>
+                      </span>
+                    )}
+                    {e.lastEPS!=null&&(
+                      <span style={{fontSize:10,color:T.textSub}}>
+                        Last <span style={{color:T.text,fontFamily:T.mono,fontWeight:600}}>${e.lastEPS}</span>
+                      </span>
+                    )}
+                    {e.beatRate!=null&&(
+                      <span style={{fontSize:10,fontWeight:700,
+                        color:e.beatRate>=75?T.up:e.beatRate>=50?"#F59E0B":T.down}}>
+                        Beat {e.beatRate}%
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            {!events.earnings.length&&!events.macro.length&&(
+              <div style={{padding:"10px 14px",fontSize:11,color:T.textSub}}>No upcoming events</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 /* ════════════════════════════════════════════════════
    STOCK CARDS
@@ -1087,7 +1381,7 @@ function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,
   const ch=pct(p||0,pc||1);
   const hasAlert=onSetAlert?getAlerts().some(a=>a.symbol===s&&!a.triggered):false;
   return(
-    <div onClick={onClick} style={{position:"relative",background:selected?T.accentBg:T.surface,border:`1px solid ${selected?T.accent:T.border}`,borderRadius:12,padding:"12px 12px 10px",cursor:"pointer",boxShadow:selected?`0 0 0 2px ${T.accent}30`:T.shadow,transition:"all 0.15s"}}>
+    <div onClick={onClick} style={{position:"relative",background:selected?T.accentBg:T.surface,border:`1px solid ${selected?T.accent:T.border}`,borderRadius:12,padding:"12px 12px 10px",cursor:"pointer",boxShadow:selected?T.accentGlow:T.shadow,transition:"all 0.15s"}}>
       {/* Header row: ticker + name on left, price + action icons on right */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
         <div style={{minWidth:0,flex:1}}>
@@ -1148,18 +1442,24 @@ const REC_CONFIG={
 };
 
 function YFInsights({symbol,price,T}){
-  const [analyst, setAnalyst]=useState(null);
-  const [news,    setNews]   =useState([]);
-  const [loading, setLoading]=useState(true);
+  const [analyst,  setAnalyst] =useState(null);
+  const [news,     setNews]    =useState([]);
+  const [actions,  setActions] =useState([]);  // named analyst upgrades/downgrades
+  const [earnings, setEarnings]=useState([]);  // quarterly EPS beat/miss history
+  const [loading,  setLoading] =useState(true);
 
   useEffect(()=>{
-    setLoading(true);setAnalyst(null);setNews([]);
+    setLoading(true);setAnalyst(null);setNews([]);setActions([]);setEarnings([]);
     Promise.all([
-      fetchBestAnalystData(symbol),  // Finnhub → YF fallback
-      fetchYFNews(symbol,5),         // Finnhub company news
-    ]).then(([a,n])=>{
+      fetchBestAnalystData(symbol),
+      fetchYFNews(symbol,5),
+      fetchUpgradesHistory(symbol),
+      fetchEarningsHistory(symbol),
+    ]).then(([a,n,act,earn])=>{
       setAnalyst(a);
       setNews((n||[]).slice(0,4));
+      setActions(act||[]);
+      setEarnings((earn||[]).slice(0,4).reverse()); // chronological order
     }).catch(()=>{}).finally(()=>setLoading(false));
   },[symbol]);
 
@@ -1181,7 +1481,7 @@ function YFInsights({symbol,price,T}){
   const w52h    = analyst?.week52High;
   const w52l    = analyst?.week52Low;
   const buckets = analyst?.buckets;
-  const upgrades = [];  // Finnhub free tier doesn't provide upgrade history
+  const upgrades = actions;  // from fetchUpgradesHistory (Yahoo Finance)
 
   const noData=!analyst&&!news.length;
   if(noData) return(
@@ -1241,18 +1541,69 @@ function YFInsights({symbol,price,T}){
         </div>
       )}
 
-      {/* Recent upgrades/downgrades */}
+      {/* Recent analyst actions — named upgrade/downgrade history */}
       {upgrades.length>0&&(
         <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
-          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:7,fontFamily:T.sans}}>Recent Analyst Actions</div>
-          {upgrades.map((u,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5,fontSize:11}}>
-              <span style={{color:T.text,fontFamily:T.sans}}>{u.firm}</span>
-              <span style={{color:u.action==="up"?T.up:T.down,fontWeight:700}}>
-                {u.action==="up"?"↑":"↓"} {u.toGrade}
-              </span>
-            </div>
-          ))}
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,fontFamily:T.sans}}>Recent Analyst Actions</div>
+          {upgrades.map((u,i)=>{
+            const isUp=u.action==="up";const isDn=u.action==="down";
+            const col=isUp?T.up:isDn?T.down:T.textSub;
+            return(
+              <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,paddingBottom:6,marginBottom:6,borderBottom:i<upgrades.length-1?`1px solid ${T.border}`:"none"}}>
+                <span style={{fontSize:12,color:col,fontWeight:700,flexShrink:0,paddingTop:1}}>{isUp?"↑":isDn?"↓":"→"}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:11,fontWeight:600,color:T.text}}>{u.firm}</div>
+                  <div style={{fontSize:10,color:T.textSub}}>
+                    {u.fromGrade&&u.fromGrade!==u.toGrade?`${u.fromGrade} → `:""}{u.toGrade}
+                    <span style={{color:isUp?T.up:isDn?T.down:T.textSub,fontWeight:700,marginLeft:5}}>
+                      {isUp?"Upgraded":isDn?"Downgraded":"Maintained"}
+                    </span>
+                  </div>
+                </div>
+                <span style={{fontSize:9,color:T.textSub,flexShrink:0,paddingTop:2}}>{u.date}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Earnings beat/miss history — last 4 quarters */}
+      {earnings.length>0&&(
+        <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,fontFamily:T.sans}}>Earnings History</div>
+          <div style={{display:"flex",gap:6}}>
+            {earnings.map((q,i)=>{
+              const beat=q.beat===true;const miss=q.beat===false;
+              const col=beat?T.up:miss?T.down:T.textSub;
+              const surp=q.surprisePercent;
+              return(
+                <div key={i} style={{flex:1,background:T.surface,borderRadius:8,padding:"8px 6px",textAlign:"center",border:`1px solid ${beat?`${T.up}40`:miss?`${T.down}40`:T.border}`}}>
+                  <div style={{fontSize:8,color:T.textSub,marginBottom:4}}>
+                    {q.quarter?`Q${q.quarter}`:""}{q.year?`'${String(q.year).slice(2)}`:""}
+                  </div>
+                  {/* Mini bar — estimate vs actual */}
+                  {q.estimate!=null&&q.actual!=null&&(()=>{
+                    const ref=Math.max(Math.abs(q.estimate),Math.abs(q.actual),0.01);
+                    const estH=Math.round((Math.abs(q.estimate)/ref)*28);
+                    const actH=Math.round((Math.abs(q.actual)/ref)*28);
+                    return(
+                      <div style={{display:"flex",justifyContent:"center",alignItems:"flex-end",gap:2,height:32,marginBottom:4}}>
+                        <div style={{width:7,height:estH,background:T.border,borderRadius:"2px 2px 0 0"}} title={`Est $${q.estimate}`}/>
+                        <div style={{width:7,height:actH,background:col,borderRadius:"2px 2px 0 0",opacity:0.9}} title={`Act $${q.actual}`}/>
+                      </div>
+                    );
+                  })()}
+                  <div style={{fontSize:9,fontWeight:700,color:col}}>{beat?"BEAT":miss?"MISS":"—"}</div>
+                  {surp!=null&&<div style={{fontSize:8,color:col,marginTop:1}}>{surp>0?"+":""}{surp.toFixed(1)}%</div>}
+                  {q.actual!=null&&<div style={{fontSize:8,color:T.textSub,marginTop:1,fontFamily:T.mono}}>${q.actual}</div>}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{display:"flex",gap:10,marginTop:6,fontSize:9,color:T.textSub,justifyContent:"center"}}>
+            <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:7,height:7,background:T.border,borderRadius:1,display:"inline-block"}}/>Est</span>
+            <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:7,height:7,background:T.up,borderRadius:1,display:"inline-block",opacity:.8}}/>Actual</span>
+          </div>
         </div>
       )}
 
@@ -1279,13 +1630,147 @@ function YFInsights({symbol,price,T}){
 }
 
 
+/* ════════════════════════════════════════════════════
+   DEEP ANALYSIS — AI-powered stock analysis (Phase C)
+════════════════════════════════════════════════════ */
+function DeepAnalysis({symbol,T}){
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+  const CACHE_KEY=`deepanalysis_${symbol}_${new Date().toDateString()}`;
+
+  // Load from cache on mount
+  useEffect(()=>{
+    try{
+      const cached=localStorage.getItem(CACHE_KEY);
+      if(cached){const d=JSON.parse(cached);if(d?.movement?.length)setData(d);}
+    }catch{}
+  },[CACHE_KEY]);
+
+  const generate=()=>{
+    setLoading(true);setError(null);
+    fetch(`/api/deepanalysis?symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(30000)})
+      .then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();})
+      .then(d=>{
+        if(!d.movement?.length)throw new Error("Empty response");
+        setData(d);
+        try{localStorage.setItem(CACHE_KEY,JSON.stringify(d));}catch{}
+      })
+      .catch(e=>setError(e.message))
+      .finally(()=>setLoading(false));
+  };
+
+  const sectionConfig=[
+    {key:"movement",label:"Why This Stock Moved",color:"#7C6FF7",icon:"◉"},
+    {key:"bulls",   label:"Bull Case",           color:T.up,     icon:"▲"},
+    {key:"bears",   label:"Bear Case",           color:T.down,   icon:"▼"},
+  ];
+
+  if(!data){
+    return(
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:20,textAlign:"center"}}>
+        {error&&<div style={{fontSize:11,color:T.down,marginBottom:12,fontFamily:T.sans}}>⚠ {error}</div>}
+        <div style={{fontSize:12,color:T.textSub,marginBottom:16,fontFamily:T.sans,lineHeight:1.5}}>
+          Claude will analyze {symbol}'s price performance, analyst consensus,<br/>
+          earnings history, and recent news to generate a data-backed view.
+        </div>
+        <button onClick={generate} disabled={loading}
+          style={{padding:"10px 24px",borderRadius:10,border:"none",cursor:loading?"not-allowed":"pointer",
+            background:loading?T.border:`linear-gradient(135deg,#6366F1,#7C6FF7)`,
+            color:loading?T.textSub:"#fff",fontSize:13,fontWeight:700,fontFamily:T.sans,
+            boxShadow:loading?"none":"0 4px 16px rgba(99,102,241,0.35)",
+            transition:"all 0.15s"}}>
+          {loading?"Generating analysis…":"✦ Generate AI Analysis"}
+        </button>
+        {loading&&(
+          <div style={{fontSize:10,color:T.textSub,marginTop:10,fontFamily:T.sans}}>
+            Fetching data + calling Claude… usually 5–10s
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {/* One-liner thesis */}
+      {data.oneLiner&&(
+        <div style={{background:`linear-gradient(135deg,#6366F118,#7C6FF710)`,border:"1px solid #6366F130",borderRadius:10,padding:"12px 16px"}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:"#7C6FF7",marginBottom:5}}>AI Thesis</div>
+          <div style={{fontSize:13,color:T.text,lineHeight:1.55,fontStyle:"italic"}}>"{data.oneLiner}"</div>
+        </div>
+      )}
+
+      {/* Three sections */}
+      {sectionConfig.map(({key,label,color,icon})=>(
+        <div key={key} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,padding:"9px 14px",borderBottom:`1px solid ${T.border}`,background:`${color}0A`}}>
+            <span style={{color,fontWeight:700,fontSize:11}}>{icon}</span>
+            <span style={{fontSize:11,fontWeight:700,color:T.text}}>{label}</span>
+          </div>
+          <div style={{padding:"6px 0"}}>
+            {(data[key]||[]).map((bullet,i)=>(
+              <div key={i} style={{display:"flex",gap:10,padding:"8px 14px",borderBottom:i<(data[key].length-1)?`1px solid ${T.border}`:"none"}}>
+                <span style={{color,fontWeight:700,fontSize:11,flexShrink:0,paddingTop:1}}>
+                  {key==="bulls"?`${i+1}.`:key==="bears"?`${i+1}.`:"•"}
+                </span>
+                <span style={{fontSize:12,color:T.textSub,lineHeight:1.55}}>{bullet}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Footer: generated time + regenerate */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 2px"}}>
+        <span style={{fontSize:9,color:T.textSub,fontFamily:T.sans}}>
+          Generated {data.generatedAt?new Date(data.generatedAt).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}):"today"} · Cached until midnight
+        </span>
+        <button onClick={()=>{setData(null);setError(null);}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontFamily:T.sans}}>
+          Regenerate ↻
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Simple stock news tab component
+function StockNews({symbol,T}){
+  const [news,setNews]=useState([]);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{
+    setLoading(true);setNews([]);
+    fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
+      .then(r=>r.ok?r.json():[]).then(n=>setNews(n||[])).catch(()=>{}).finally(()=>setLoading(false));
+  },[symbol]);
+  if(loading)return<div style={{padding:16,fontSize:11,color:T.textSub}}>Loading news…</div>;
+  if(!news.length)return<div style={{padding:16,fontSize:11,color:T.textSub}}>No recent news for {symbol}.</div>;
+  return(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden"}}>
+      {news.map((n,i)=>(
+        <a key={i} href={n.link||n.url||"#"} target="_blank" rel="noreferrer"
+          style={{display:"flex",gap:10,padding:"10px 14px",borderBottom:i<news.length-1?`1px solid ${T.border}`:"none",textDecoration:"none",cursor:"pointer"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:12,color:T.text,lineHeight:1.4,marginBottom:3}}>{n.title||n.h}</div>
+            <div style={{fontSize:10,color:T.textSub}}>{n.publisher} · {n.providerPublishTime||n.time?new Date((n.providerPublishTime||n.time)*1000).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}</div>
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function StockDetail({selected,names,T,onClose,onSetAlert}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
+  const [detailView,setDetailView]=useState("analysis"); // "analysis" | "data" | "news"
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
+
+  // Reset view when ticker changes
+  useEffect(()=>{ setDetailView("analysis"); },[selected.s]);
 
   useEffect(()=>{
     let cancelled=false;
@@ -1336,6 +1821,26 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
       {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
       {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T}/></div>);})()}
       <YFInsights symbol={selected.s} price={selected.p} T={T}/>
+      {/* ── AI Deep Analysis ─────────────────────────── */}
+      <div style={{marginTop:10}}>
+        <div style={{display:"flex",gap:0,marginBottom:10,background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+          {[["analysis","✦ AI Analysis"],["data","Analyst Data"],["news","News"]].map(([id,lbl])=>{
+            const active=detailView===id;
+            return(
+              <button key={id} onClick={()=>setDetailView(id)}
+                style={{flex:1,padding:"8px 4px",border:"none",fontSize:11,cursor:"pointer",fontWeight:active?700:400,
+                  background:active?`linear-gradient(135deg,#6366F1,#7C6FF7)`:"transparent",
+                  color:active?"#fff":T.textSub,fontFamily:T.sans,transition:"all 0.12s",
+                  borderRight:id!=="news"?`1px solid ${T.border}`:"none"}}>
+                {lbl}
+              </button>
+            );
+          })}
+        </div>
+        {detailView==="analysis"&&<DeepAnalysis symbol={selected.s} T={T}/>}
+        {detailView==="data"&&<YFInsights symbol={selected.s} price={selected.p} T={T}/>}
+        {detailView==="news"&&<StockNews symbol={selected.s} T={T}/>}
+      </div>
     </div>
   );
 }
@@ -1945,18 +2450,21 @@ export default function StockScreener(){
   );
 
   return(
-    <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:T.sans,padding:isMobile?"10px 12px 32px":"16px 20px 40px",boxSizing:"border-box",transition:"background 0.2s,color 0.2s"}}>
+    <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:T.sans,padding:isMobile?"10px 12px 32px":"18px 24px 48px",boxSizing:"border-box",transition:"background 0.2s,color 0.2s"}}>
       <style>{`
+        html,body,#root{margin:0;padding:0;background:${T.bg};}
+        *{box-sizing:border-box;}
         @keyframes pulse  {0%,100%{opacity:1}50%{opacity:0.3}}
         @keyframes fadeUp {from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes shimmer{0%,100%{opacity:0.5}50%{opacity:0.9}}
+        @keyframes purpleGlow{0%,100%{box-shadow:0 0 8px rgba(124,111,247,0.3)}50%{box-shadow:0 0 20px rgba(124,111,247,0.6)}}
         ::-webkit-scrollbar{width:4px;height:4px}
         ::-webkit-scrollbar-thumb{background:${T.border};border-radius:2px}
         input::placeholder{color:${T.textSub}}
       `}</style>
 
       {/* ── HEADER ────────────────────────────── */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8,padding:"4px 0 8px",borderBottom:`1px solid ${T.border}`}}>
         <div>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
             <div style={{fontSize:isMobile?16:20,fontWeight:700,color:T.text,letterSpacing:"-0.02em"}}>AI Market Screener</div>
@@ -1980,9 +2488,12 @@ export default function StockScreener(){
         </div>
       </div>
 
-      {/* ── MARKET HERO ─────────────────────────── */}
-      <MarketHero T={T} selectedIdx={selectedIdx} onSelectIdx={setSelectedIdx} symbols={allSymbols} indices={indices} news={mktNews} refreshing={refreshing}/>
+      {/* ── MARKET BAR (slim index strip) ─────────── */}
+      <MarketBar indices={indices} selectedIdx={selectedIdx} onSelectIdx={setSelectedIdx} T={T}/>
       {selectedIdx&&<IndexChart key={selectedIdx.s} index={selectedIdx} T={T}/>}
+
+      {/* ── INTELLIGENCE FEED ─────────────────────── */}
+      <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
 
       {/* ── TABS (underline style) ─────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:0,overflowX:"auto",borderBottom:`1px solid ${T.border}`}}>
