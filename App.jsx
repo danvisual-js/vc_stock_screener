@@ -552,9 +552,8 @@ async function fetchYFChart(symbol, tf){
     if(!isExtended)prevDayStr=dayLabel;
     return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
   }).filter(Boolean);
-  if(bars.length>5)return bars;
-    if(bars.length<=5)throw new Error("too few bars");
-    return bars;
+  if(bars.length<=5)throw new Error("too few bars");
+  return bars;
   };
   // Promise.any: try all URLs in parallel, use first success
   try{
@@ -869,7 +868,17 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
 
-  // Drawing click handler
+  // ── Drawing state (must be before onChartClick useCallback) ─────────────
+  const DRAW_KEY=`drawings_${symbol||"x"}_${tf||"5m"}`;
+  const [drawings,setDrawings]=useState(()=>{try{return JSON.parse(localStorage.getItem(DRAW_KEY)||"[]");}catch{return[];}});
+  useEffect(()=>{try{localStorage.setItem(DRAW_KEY,JSON.stringify(drawings));}catch{}},[drawings,DRAW_KEY]);
+  const [drawMode,setDrawMode]=useState(null);
+  const [drawStart,setDrawStart]=useState(null);
+  const [selDraw,setSelDraw]=useState(null);
+  // Ref carries latest chart range into click handler (avoids TDZ with minP/rng)
+  const chartRange=useRef({minP:0,rng:1});
+
+  // Drawing click handler — safe now that all deps are declared above
   const onChartClick=useCallback((e)=>{
     if(!drawMode)return;
     const rect=divRef.current?.getBoundingClientRect();
@@ -877,48 +886,39 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
     const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
     const svgY=(e.clientY-rect.top)/rect.height*CC_VH;
     const barAbsIdx=Math.round((svgX-CC_PAD.l)/CC_W*visData.length)+vStart;
-    // sy gives screen y from price — invert: price = minP + (1 - (svgY-Pad.t)/H) * rng
-    const price=minP+(1-(svgY-CC_PAD.t)/CC_H)*rng;
+    const price=chartRange.current.minP+(1-(svgY-CC_PAD.t)/CC_H)*chartRange.current.rng;
+    if(isNaN(price)||price<=0)return;
     if(drawMode==='hline'){
       setDrawings(prev=>[...prev,{id:Date.now(),type:'hline',price,color:'#A78BFA'}]);
       setDrawMode(null);
     } else if(drawMode==='trend'){
-      if(!drawStart){
-        setDrawStart({barIdx:barAbsIdx,price});
-      } else {
-        setDrawings(prev=>[...prev,{id:Date.now(),type:'trend',p1:drawStart,p2:{barIdx:barAbsIdx,price},color:'#6366F1'}]);
-        setDrawStart(null);setDrawMode(null);
-      }
+      if(!drawStart){setDrawStart({barIdx:barAbsIdx,price});}
+      else{setDrawings(prev=>[...prev,{id:Date.now(),type:'trend',p1:drawStart,p2:{barIdx:barAbsIdx,price},color:'#6366F1'}]);setDrawStart(null);setDrawMode(null);}
     }
-  },[drawMode,drawStart,vStart,minP,rng,visData.length]);
+  },[drawMode,drawStart,vStart,visData.length]);
 
-  // Crosshair — uses RAF + correct SVG coordinate conversion
+  // ── Crosshair state + RAF handler ────────────────────────────────────────
   const [hoverI,setHoverI]=useState(null);
   const rafRef=useRef(null);
-  // Drawing tools state
-  const DRAW_KEY=`drawings_${symbol||"x"}_${tf||"5m"}`;
-  const [drawings,setDrawings]=useState(()=>{try{return JSON.parse(localStorage.getItem(DRAW_KEY)||"[]");}catch{return[];}});
-  useEffect(()=>{try{localStorage.setItem(DRAW_KEY,JSON.stringify(drawings));}catch{}},[drawings,DRAW_KEY]);
-  const [drawMode,setDrawMode]=useState(null); // null|'hline'|'trend'
-  const [drawStart,setDrawStart]=useState(null); // {barIdx,price} for trend pt1
-  const [selDraw,setSelDraw]=useState(null); // id of selected drawing
   const onSVGMove=useCallback((e)=>{
     if(rafRef.current)cancelAnimationFrame(rafRef.current);
     rafRef.current=requestAnimationFrame(()=>{
       const rect=divRef.current?.getBoundingClientRect();
       if(!rect)return;
-      // Use module-level CC_ constants — safe from TDZ
       const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
       const idx=Math.floor((svgX-CC_PAD.l)/CC_W*visData.length);
       setHoverI(idx>=0&&idx<visData.length?idx:null);
     });
-  },[visData.length]); // CC_ constants never change — omit from deps
+  },[visData.length]);
   const onSVGLeave=()=>{if(rafRef.current)cancelAnimationFrame(rafRef.current);setHoverI(null);};
-  // Alias module constants locally for readability in render below
+
+  // ── Chart geometry (after all hooks) ────────────────────────────────────
   const VW=CC_VW,VH=CC_VH,Pad=CC_PAD,W=CC_W,H=CC_H;
   if(!visData.length)return null;
   const prices=visData.flatMap(d=>[d.high,d.low]);
   const minP=Math.min(...prices)*0.997,maxP=Math.max(...prices)*1.003,rng=maxP-minP||1;
+  // Update chart range ref for click handler
+  chartRange.current={minP,rng};
   const sy=p=>Pad.t+H*(1-(p-minP)/rng);
   const sx=i=>Pad.l+(i+0.5)*(W/visData.length);
   const cw=Math.max(2,(W/visData.length)*0.62);
@@ -927,7 +927,11 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const fY=p=>p>=10000?(p/1000).toFixed(0)+"K":p>=100?p.toFixed(0):p<1?p.toFixed(3):p.toFixed(2);
   const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
   return(
-    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}} onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);}} onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}} onDoubleClick={resetZoom} onClick={onChartClick} style={{cursor:drawMode?"crosshair":"default",userSelect:"none",position:"relative"}}>
+    <div ref={divRef}
+      style={{position:"relative",cursor:drawMode?"crosshair":"default",userSelect:"none"}}
+      onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);}}
+      onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}}
+      onDoubleClick={resetZoom} onClick={onChartClick}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
