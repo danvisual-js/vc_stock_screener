@@ -275,7 +275,7 @@ const DARK = {
   sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
   ema9:      "#F59E0B",   ema20:"#60A5FA",  ema50:"#C084FC",
   chartGrid: "#1A1D2E",
-  insightBg:"#0F172A",insightBorder:"#1E3A5F",insightText:"#93C5FD",
+  insightBg:"#0F1018",insightBorder:"#1E2334",insightText:"#6366F1",
   upBg:"#00D08420",downBg:"#FF456020",accentBg:"#6366F118",
   shadow:    "0 2px 8px rgba(0,0,0,0.5)",
   // Subtle purple glow on selected card — the only purple touch
@@ -291,7 +291,7 @@ const LIGHT = {
   sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
   ema9:      "#D97706",   ema20:"#2563EB",  ema50:"#7C3AED",
   chartGrid: "#F0F0F5",
-  insightBg:"#EFF6FF",insightBorder:"#BFDBFE",insightText:"#1D4ED8",
+  insightBg:"#FFFFFF",insightBorder:"#E5E5EA",insightText:"#6355E8",
   upBg:"#00B38618",downBg:"#E74C3C18",accentBg:"#6355E812",
   shadow:    "0 1px 4px rgba(0,0,0,0.08)",
   accentGlow:"0 0 0 1.5px #6355E860",
@@ -522,41 +522,46 @@ async function fetchYFChart(symbol, tf){
   // Then try with pre/post market if supported
   const urls=[base];
   if(prePost)urls.push(base+"&includePrePost=true"); // appended as fallback
-  for(const url of urls){ // try regular first (reliable), then prePost
-    try{
+  const processChart=async(url)=>{
     const data=await yfFetch(url);
     const res=data?.chart?.result?.[0];
-    if(!res)continue; // ← was return null — now tries next URL
-    const ts=res.timestamp||[];
-    const q=res.indicators?.quote?.[0]||{};
-    const isIntra=barMin<1440;
-    const multiDay=range!=="1d";
-    const ET_OFF=4*3600;
-    let prevDayStr="";
-    const bars=ts.map((t,i)=>{
-      const open=q.open?.[i]||0,close=q.close?.[i]||0;
-      const high=q.high?.[i]||0,low=q.low?.[i]||0;
-      const volume=q.volume?.[i]||0;
-      if(!close||!high)return null;
-      const etTs=t-ET_OFF;
-      const etH=Math.floor((etTs%86400)/3600);
-      const etM=Math.floor((etTs%3600)/60);
-      const etMins=etH*60+etM;
-      const isExtended=isIntra&&(etMins<570||etMins>=960);
-      const d=new Date(t*1000);
-      const dayLabel=d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
-      const timeLabel=`${etH===0||etH===12?12:etH%12}:${String(etM).padStart(2,"0")} ${etH<12?"AM":"PM"}`;
-      let label;
-      if(!isIntra){label=dayLabel;}
-      else if(multiDay&&!isExtended&&dayLabel!==prevDayStr){label=dayLabel;}
-      else{label=timeLabel;}
-      if(!isExtended)prevDayStr=dayLabel;
-      return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
-    }).filter(Boolean);
-    if(bars.length>5)return bars;
-    }catch(e){console.warn("chart attempt failed:",e);}
-  }
-  return null;
+    if(!res)throw new Error("no result");
+  const ts=res.timestamp||[];
+  const q=res.indicators?.quote?.[0]||{};
+  const isIntra=barMin<1440;
+  const multiDay=range!=="1d";
+  const ET_OFF=4*3600;
+  let prevDayStr="";
+  const bars=ts.map((t,i)=>{
+    const open=q.open?.[i]||0,close=q.close?.[i]||0;
+    const high=q.high?.[i]||0,low=q.low?.[i]||0;
+    const volume=q.volume?.[i]||0;
+    if(!close||!high)return null;
+    const etTs=t-ET_OFF;
+    const etH=Math.floor((etTs%86400)/3600);
+    const etM=Math.floor((etTs%3600)/60);
+    const etMins=etH*60+etM;
+    const isExtended=isIntra&&(etMins<570||etMins>=960);
+    const d=new Date(t*1000);
+    const dayLabel=d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    const timeLabel=`${etH===0||etH===12?12:etH%12}:${String(etM).padStart(2,"0")} ${etH<12?"AM":"PM"}`;
+    let label;
+    if(!isIntra){label=dayLabel;}
+    else if(multiDay&&!isExtended&&dayLabel!==prevDayStr){label=dayLabel;}
+    else{label=timeLabel;}
+    if(!isExtended)prevDayStr=dayLabel;
+    return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
+  }).filter(Boolean);
+  if(bars.length>5)return bars;
+    if(bars.length<=5)throw new Error("too few bars");
+    return bars;
+  };
+  // Promise.any: try all URLs in parallel, use first success
+  try{
+    const attempts=[processChart(base)];
+    if(prePost)attempts.push(processChart(base+"&includePrePost=true"));
+    return await Promise.any(attempts);
+  }catch{return null;}
 }
 async function fetchPrices(symbols){
   if(!symbols.length)return{};
@@ -837,7 +842,7 @@ function buildVolumeProfile(data, buckets=30){
 const CC_VW=900,CC_VH=210,CC_PAD={t:8,r:44,b:22,l:54};
 const CC_W=CC_VW-CC_PAD.l-CC_PAD.r, CC_H=CC_VH-CC_PAD.t-CC_PAD.b;
 
-function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,T}){
+function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T}){
   const [vS,setVS]=useState(0);
   const [vE,setVE]=useState(()=>data.length);
   const drag=useRef({on:false,x0:0,s0:0,e0:0});
@@ -864,9 +869,39 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
 
+  // Drawing click handler
+  const onChartClick=useCallback((e)=>{
+    if(!drawMode)return;
+    const rect=divRef.current?.getBoundingClientRect();
+    if(!rect)return;
+    const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
+    const svgY=(e.clientY-rect.top)/rect.height*CC_VH;
+    const barAbsIdx=Math.round((svgX-CC_PAD.l)/CC_W*visData.length)+vStart;
+    // sy gives screen y from price — invert: price = minP + (1 - (svgY-Pad.t)/H) * rng
+    const price=minP+(1-(svgY-CC_PAD.t)/CC_H)*rng;
+    if(drawMode==='hline'){
+      setDrawings(prev=>[...prev,{id:Date.now(),type:'hline',price,color:'#A78BFA'}]);
+      setDrawMode(null);
+    } else if(drawMode==='trend'){
+      if(!drawStart){
+        setDrawStart({barIdx:barAbsIdx,price});
+      } else {
+        setDrawings(prev=>[...prev,{id:Date.now(),type:'trend',p1:drawStart,p2:{barIdx:barAbsIdx,price},color:'#6366F1'}]);
+        setDrawStart(null);setDrawMode(null);
+      }
+    }
+  },[drawMode,drawStart,vStart,minP,rng,visData.length]);
+
   // Crosshair — uses RAF + correct SVG coordinate conversion
   const [hoverI,setHoverI]=useState(null);
   const rafRef=useRef(null);
+  // Drawing tools state
+  const DRAW_KEY=`drawings_${symbol||"x"}_${tf||"5m"}`;
+  const [drawings,setDrawings]=useState(()=>{try{return JSON.parse(localStorage.getItem(DRAW_KEY)||"[]");}catch{return[];}});
+  useEffect(()=>{try{localStorage.setItem(DRAW_KEY,JSON.stringify(drawings));}catch{}},[drawings,DRAW_KEY]);
+  const [drawMode,setDrawMode]=useState(null); // null|'hline'|'trend'
+  const [drawStart,setDrawStart]=useState(null); // {barIdx,price} for trend pt1
+  const [selDraw,setSelDraw]=useState(null); // id of selected drawing
   const onSVGMove=useCallback((e)=>{
     if(rafRef.current)cancelAnimationFrame(rafRef.current);
     rafRef.current=requestAnimationFrame(()=>{
@@ -892,7 +927,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const fY=p=>p>=10000?(p/1000).toFixed(0)+"K":p>=100?p.toFixed(0):p<1?p.toFixed(3):p.toFixed(2);
   const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
   return(
-    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}} onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);}} onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}} onDoubleClick={resetZoom}>
+    <div ref={divRef} style={{position:"relative",cursor:"default",userSelect:"none"}} onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);}} onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}} onDoubleClick={resetZoom} onClick={onChartClick} style={{cursor:drawMode?"crosshair":"default",userSelect:"none",position:"relative"}}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
@@ -924,6 +959,66 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
         {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
         {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
         {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
+        {/* ── Drawing Toolbar (H-Line / Trend controls) ───────────── */}
+        {(drawMode||drawings.length>0)&&(
+          <foreignObject x={Pad.l} y={2} width={200} height={22} style={{overflow:"visible"}}>
+            <div xmlns="http://www.w3.org/1999/xhtml" style={{display:"flex",gap:4,pointerEvents:"all"}}>
+              {[['hline','─ H-Line','#A78BFA'],['trend','/ Trend','#6366F1']].map(([mode,lbl,col])=>(
+                <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
+                  style={{padding:"2px 7px",fontSize:8,fontWeight:700,borderRadius:4,border:`1px solid ${drawMode===mode?col:T.border}`,background:drawMode===mode?`${col}20`:"transparent",color:drawMode===mode?col:T.textSub,cursor:"pointer",fontFamily:T.sans}}>
+                  {lbl}{drawMode===mode&&mode==='trend'&&drawStart?" (click pt 2)":""}
+                </button>
+              ))}
+              {drawings.length>0&&<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
+                style={{padding:"2px 7px",fontSize:8,fontWeight:700,borderRadius:4,border:`1px solid ${T.border}`,background:"transparent",color:T.down,cursor:"pointer",fontFamily:T.sans}}>✕ Clear</button>}
+            </div>
+          </foreignObject>
+        )}
+
+        {/* ── Saved drawings ──────────────────────────────────────── */}
+        {drawings.map(d=>{
+          const isSel=selDraw===d.id;
+          const delBtn=(x,y)=>(
+            <g onClick={e=>{e.stopPropagation();setDrawings(p=>p.filter(x=>x.id!==d.id));setSelDraw(null);}} style={{cursor:"pointer"}}>
+              <rect x={x-8} y={y-8} width={16} height={16} rx={3} fill={T.down}/>
+              <text x={x} y={y+1} fontSize={8} fill="#fff" textAnchor="middle" dominantBaseline="middle">✕</text>
+            </g>
+          );
+          if(d.type==='hline'){
+            const y=sy(d.price);
+            if(y<Pad.t||y>Pad.t+H)return null;
+            return(<g key={d.id} onClick={e=>{e.stopPropagation();setSelDraw(isSel?null:d.id);}} style={{cursor:"pointer"}}>
+              <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke={d.color} strokeWidth={isSel?2:1.2} strokeDasharray="6,3" opacity={0.85}/>
+              <text x={Pad.l+W+3} y={y+1} fontSize={7.5} fill={d.color} dominantBaseline="middle">{fY(d.price)}</text>
+              {isSel&&delBtn(Pad.l+W-14,y)}
+            </g>);
+          }
+          if(d.type==='trend'){
+            const vi1=d.p1.barIdx-vStart, vi2=d.p2.barIdx-vStart;
+            if(vi1<-20||vi2<-20||vi1>visData.length+20||vi2>visData.length+20)return null;
+            const x1=Pad.l+(vi1+0.5)*(W/visData.length), y1=sy(d.p1.price);
+            const x2=Pad.l+(vi2+0.5)*(W/visData.length), y2=sy(d.p2.price);
+            const midX=(x1+x2)/2, midY=(y1+y2)/2;
+            return(<g key={d.id} onClick={e=>{e.stopPropagation();setSelDraw(isSel?null:d.id);}} style={{cursor:"pointer"}}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color} strokeWidth={isSel?2.5:1.5} opacity={0.9}/>
+              {isSel&&delBtn(midX,midY)}
+            </g>);
+          }
+          return null;
+        })}
+
+        {/* Preview line while drawing */}
+        {drawMode==='hline'&&hoverI!=null&&visData[hoverI]&&(
+          <line x1={Pad.l} x2={Pad.l+W} y1={sy(visData[hoverI].close)} y2={sy(visData[hoverI].close)}
+            stroke="#A78BFA" strokeWidth={0.8} strokeDasharray="4,2" opacity={0.5} style={{pointerEvents:"none"}}/>
+        )}
+        {drawMode==='trend'&&drawStart&&hoverI!=null&&visData[hoverI]&&(()=>{
+          const vi1=drawStart.barIdx-vStart;
+          const x1=Pad.l+(vi1+0.5)*(W/visData.length), y1=sy(drawStart.price);
+          const x2=sx(hoverI), y2=sy(visData[hoverI].close);
+          return<line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#6366F1" strokeWidth={1} strokeDasharray="4,2" opacity={0.7} style={{pointerEvents:"none"}}/>;
+        })()}
+
         {/* ── Crosshair — Google Finance style ─────────────────── */}
         {hoverI!=null&&visData[hoverI]&&(()=>{
           const bar=visData[hoverI];
@@ -1160,7 +1255,7 @@ function IndexChart({index,T}){
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
       <div>
         {chartMode==="candle"
-          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T}/>
+          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={index.s} tf={tf}/>
           :<LineChartView data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={185} accent={col}/>
         }
       </div>
@@ -1831,7 +1926,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
             <span style={{animation:"pulse 1.2s infinite",display:"inline-block"}}>⟳</span> Fetching real-time chart…
            </div>
           :chartData.length>0&&(chartMode==="candle"
-            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T}/>
+            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={tf}/>
             :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={195} accent={isUp?T.up:T.down}/>
           )
         }
