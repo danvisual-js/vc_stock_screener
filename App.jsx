@@ -877,27 +877,56 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const [drawMode,setDrawMode]=useState(null);
   const [drawStart,setDrawStart]=useState(null);
   const [selDraw,setSelDraw]=useState(null);
-  // Ref carries latest chart range into click handler (avoids TDZ with minP/rng)
-  const chartRange=useRef({minP:0,rng:1});
+  const [draggingDraw,setDraggingDraw]=useState(null); // {id,startSvgX,startSvgY,orig}
+  const chartRange=useRef({minP:0,rng:1}); // updated after minP computed
 
-  // Drawing click handler — safe now that all deps are declared above
-  const onChartClick=useCallback((e)=>{
-    if(!drawMode)return;
+  // Convert mouse event → SVG position + bar index + price
+  const svgPos=useCallback((e)=>{
     const rect=divRef.current?.getBoundingClientRect();
-    if(!rect)return;
+    if(!rect)return null;
     const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
     const svgY=(e.clientY-rect.top)/rect.height*CC_VH;
     const barAbsIdx=Math.round((svgX-CC_PAD.l)/CC_W*visData.length)+vStart;
     const price=chartRange.current.minP+(1-(svgY-CC_PAD.t)/CC_H)*chartRange.current.rng;
-    if(isNaN(price)||price<=0)return;
+    return{svgX,svgY,barAbsIdx,price};
+  },[vStart,visData.length]);
+
+  const onChartClick=useCallback((e)=>{
+    if(!drawMode)return;
+    const pos=svgPos(e);if(!pos||isNaN(pos.price)||pos.price<=0)return;
     if(drawMode==='hline'){
-      setDrawings(prev=>[...prev,{id:Date.now(),type:'hline',price,color:'#A78BFA'}]);
+      setDrawings(prev=>[...prev,{id:Date.now(),type:'hline',price:pos.price,color:'#A78BFA'}]);
       setDrawMode(null);
     } else if(drawMode==='trend'){
-      if(!drawStart){setDrawStart({barIdx:barAbsIdx,price});}
-      else{setDrawings(prev=>[...prev,{id:Date.now(),type:'trend',p1:drawStart,p2:{barIdx:barAbsIdx,price},color:'#6366F1'}]);setDrawStart(null);setDrawMode(null);}
+      if(!drawStart)setDrawStart({barIdx:pos.barAbsIdx,price:pos.price});
+      else{setDrawings(prev=>[...prev,{id:Date.now(),type:'trend',p1:drawStart,p2:{barIdx:pos.barAbsIdx,price:pos.price},color:'#6366F1'}]);setDrawStart(null);setDrawMode(null);}
     }
-  },[drawMode,drawStart,vStart,visData.length]);
+  },[drawMode,drawStart,svgPos]);
+
+  // Drag-to-move handlers (TradingView-style)
+  const onDrawingMouseDown=useCallback((e,drawing)=>{
+    if(drawMode)return;
+    e.stopPropagation();
+    const pos=svgPos(e);if(!pos)return;
+    setSelDraw(drawing.id);
+    setDraggingDraw({id:drawing.id,startSvgX:pos.svgX,startSvgY:pos.svgY,orig:JSON.parse(JSON.stringify(drawing))});
+  },[drawMode,svgPos]);
+
+  const onDrawingMouseMove=useCallback((e)=>{
+    if(!draggingDraw)return;
+    const pos=svgPos(e);if(!pos)return;
+    const dprice=(draggingDraw.startSvgY-pos.svgY)/CC_H*chartRange.current.rng;
+    const dbar=Math.round((pos.svgX-draggingDraw.startSvgX)/CC_W*visData.length);
+    const{orig}=draggingDraw;
+    setDrawings(prev=>prev.map(d=>{
+      if(d.id!==draggingDraw.id)return d;
+      if(d.type==='hline')return{...d,price:orig.price+dprice};
+      if(d.type==='trend')return{...d,p1:{barIdx:orig.p1.barIdx+dbar,price:orig.p1.price+dprice},p2:{barIdx:orig.p2.barIdx+dbar,price:orig.p2.price+dprice}};
+      return d;
+    }));
+  },[draggingDraw,svgPos,visData.length]);
+
+  const onDrawingMouseUp=useCallback(()=>setDraggingDraw(null),[]);
 
   // ── Crosshair state + RAF handler ────────────────────────────────────────
   const [hoverI,setHoverI]=useState(null);
@@ -931,8 +960,8 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   return(
     <div ref={divRef}
       style={{position:"relative",cursor:drawMode?"crosshair":"default",userSelect:"none"}}
-      onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);}}
-      onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}}
+      onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);onDrawingMouseMove(e);}}
+      onMouseUp={(e)=>{onMU(e);onDrawingMouseUp();}} onMouseLeave={(e)=>{onMU(e);onSVGLeave();onDrawingMouseUp();}}
       onDoubleClick={resetZoom} onClick={onChartClick}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
       {/* Drawing toolbar — always visible so user can enter draw mode */}
@@ -950,6 +979,22 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       </div>
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
+        {/* Pre/after-hours shading — grey bands for extended hours regions */}
+        {visData.some(d=>d.isExtended)&&(()=>{
+          const extBands=[];
+          let bandStart=null;
+          visData.forEach((d,i)=>{
+            if(d.isExtended&&bandStart===null)bandStart=i;
+            else if(!d.isExtended&&bandStart!==null){extBands.push({s:bandStart,e:i-1});bandStart=null;}
+          });
+          if(bandStart!==null)extBands.push({s:bandStart,e:visData.length-1});
+          return extBands.map((b,i)=>(
+            <rect key={i}
+              x={Pad.l+(b.s)*(W/visData.length)} y={Pad.t}
+              width={(b.e-b.s+1)*(W/visData.length)} height={H}
+              fill={T.textTert||"#1E293B"} opacity={0.35}/>
+          ));
+        })()}
         {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
         {/* Session boundary lines + candles */}
         {visData.map((d,i)=>{
@@ -992,7 +1037,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
           if(d.type==='hline'){
             const y=sy(d.price);
             if(y<Pad.t||y>Pad.t+H)return null;
-            return(<g key={d.id} onClick={e=>{e.stopPropagation();setSelDraw(isSel?null:d.id);}} style={{cursor:"pointer"}}>
+            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)} onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}} style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
               <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke={d.color} strokeWidth={isSel?2:1.2} strokeDasharray="6,3" opacity={0.85}/>
               <text x={Pad.l+W+3} y={y+1} fontSize={7.5} fill={d.color} dominantBaseline="middle">{fY(d.price)}</text>
               {isSel&&delBtn(Pad.l+W-14,y)}
@@ -1004,7 +1049,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
             const x1=Pad.l+(vi1+0.5)*(W/visData.length), y1=sy(d.p1.price);
             const x2=Pad.l+(vi2+0.5)*(W/visData.length), y2=sy(d.p2.price);
             const midX=(x1+x2)/2, midY=(y1+y2)/2;
-            return(<g key={d.id} onClick={e=>{e.stopPropagation();setSelDraw(isSel?null:d.id);}} style={{cursor:"pointer"}}>
+            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)} onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}} style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color} strokeWidth={isSel?2.5:1.5} opacity={0.9}/>
               {isSel&&delBtn(midX,midY)}
             </g>);
@@ -1888,11 +1933,11 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
-  const [detailView,setDetailView]=useState("analysis"); // "analysis" | "data" | "news"
+  const [detailView,setDetailView]=useState("data"); // open on Analyst Data by default // "analysis" | "data" | "news"
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
 
   // Reset view when ticker changes
-  useEffect(()=>{ setDetailView("analysis"); },[selected.s]);
+  useEffect(()=>{ setDetailView("data"); },[selected.s]);
 
   useEffect(()=>{
     let cancelled=false;
@@ -1946,7 +1991,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
       {/* ── AI Deep Analysis ─────────────────────────── */}
       <div style={{marginTop:10}}>
         <div style={{display:"flex",gap:0,marginBottom:10,background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-          {[["analysis","✦ AI Analysis"],["data","Analyst Data"]].map(([id,lbl])=>{
+          {[["data","Analyst Data"],["analysis","✦ AI Analysis"]].map(([id,lbl])=>{
             const active=detailView===id;
             return(
               <button key={id} onClick={()=>setDetailView(id)}
@@ -2675,7 +2720,7 @@ export default function StockScreener(){
       )}
 
       {/* ── RECOMMENDATIONS ──────────────────────── */}
-      {!selected&&<YahooRecommendations stocks={stocks} T={T} refreshKey={refreshKey}/>}
+
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
         Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
