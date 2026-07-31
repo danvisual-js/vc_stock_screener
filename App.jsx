@@ -369,6 +369,8 @@ function calcVWAP(data){
   return data.map(d=>+((d.high+d.low+d.close)/3).toFixed(4));
 }
 function calcBollinger(cl,p=20,m=2){
+  // Adaptive period — renders sooner on short/zoomed data
+  p=Math.min(p,Math.max(5,Math.floor(cl.length/3)));
   const up=[],mid=[],lo=[];
   for(let i=0;i<cl.length;i++){
     if(i<p-1){up.push(null);mid.push(null);lo.push(null);continue;}
@@ -933,6 +935,19 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       onMouseUp={onMU} onMouseLeave={(e)=>{onMU(e);onSVGLeave();}}
       onDoubleClick={resetZoom} onClick={onChartClick}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
+      {/* Drawing toolbar — always visible so user can enter draw mode */}
+      <div style={{position:"absolute",top:6,left:4,zIndex:10,display:"flex",gap:3,pointerEvents:"all"}}>
+        {[['hline','─','H-Line','#A78BFA'],['trend','/','Trend','#6366F1']].map(([mode,ico,lbl,col])=>(
+          <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
+            title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point":lbl}
+            style={{padding:"2px 7px",fontSize:9,fontWeight:700,borderRadius:5,border:`1px solid ${drawMode===mode?col:T.border}`,background:drawMode===mode?`${col}25`:"rgba(15,16,24,0.85)",color:drawMode===mode?col:T.textSub,cursor:"pointer",backdropFilter:"blur(4px)"}}>
+            {ico}{drawMode===mode?" ✓":""}
+          </button>
+        ))}
+        {drawings.length>0&&<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
+          title="Clear all drawings"
+          style={{padding:"2px 7px",fontSize:9,fontWeight:700,borderRadius:5,border:`1px solid ${T.border}`,background:"rgba(15,16,24,0.85)",color:T.down,cursor:"pointer",backdropFilter:"blur(4px)"}}>✕</button>}
+      </div>
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
         {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
@@ -963,21 +978,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
         {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
         {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
         {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
-        {/* ── Drawing Toolbar (H-Line / Trend controls) ───────────── */}
-        {(drawMode||drawings.length>0)&&(
-          <foreignObject x={Pad.l} y={2} width={200} height={22} style={{overflow:"visible"}}>
-            <div xmlns="http://www.w3.org/1999/xhtml" style={{display:"flex",gap:4,pointerEvents:"all"}}>
-              {[['hline','─ H-Line','#A78BFA'],['trend','/ Trend','#6366F1']].map(([mode,lbl,col])=>(
-                <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
-                  style={{padding:"2px 7px",fontSize:8,fontWeight:700,borderRadius:4,border:`1px solid ${drawMode===mode?col:T.border}`,background:drawMode===mode?`${col}20`:"transparent",color:drawMode===mode?col:T.textSub,cursor:"pointer",fontFamily:T.sans}}>
-                  {lbl}{drawMode===mode&&mode==='trend'&&drawStart?" (click pt 2)":""}
-                </button>
-              ))}
-              {drawings.length>0&&<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
-                style={{padding:"2px 7px",fontSize:8,fontWeight:700,borderRadius:4,border:`1px solid ${T.border}`,background:"transparent",color:T.down,cursor:"pointer",fontFamily:T.sans}}>✕ Clear</button>}
-            </div>
-          </foreignObject>
-        )}
+
 
         {/* ── Saved drawings ──────────────────────────────────────── */}
         {drawings.map(d=>{
@@ -1292,6 +1293,7 @@ function IntelligenceFeed({stocks,news,symbols,T}){
   },[symbols.join(",")]);// eslint-disable-line
 
   const items=useMemo(()=>buildFeedItems(stocks,news,events,T),[stocks,news,events,T]);
+  const [showAllFeed,setShowAllFeed]=useState(false);
 
   const TYPE_BG={up:`${T.up}0A`,down:`${T.down}0A`,earnings:"#F59E0B0A",macro:"#A78BFA0A",news:"transparent"};
 
@@ -1306,11 +1308,11 @@ function IntelligenceFeed({stocks,news,symbols,T}){
       </div>
 
       {/* Feed items */}
-      <div style={{maxHeight:360,overflowY:"auto"}}>
+      <div>
         {!items.length&&(
           <div style={{padding:"16px 14px",fontSize:11,color:T.textSub}}>Loading market data…</div>
         )}
-        {items.map((item,i)=>(
+        {items.slice(0,showAllFeed?items.length:5).map((item,i)=>(
           <a key={item.id} href={item.url||undefined} target={item.url?"_blank":undefined} rel="noreferrer"
             style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 14px",
               borderBottom:i<items.length-1?`1px solid ${T.border}`:"none",
@@ -1330,6 +1332,16 @@ function IntelligenceFeed({stocks,news,symbols,T}){
             <span style={{fontSize:9,color:T.textSub,fontWeight:500,flexShrink:0,paddingTop:2,whiteSpace:"nowrap"}}>{item.time}</span>
           </a>
         ))}
+        {!showAllFeed&&items.length>5&&(
+          <button onClick={()=>setShowAllFeed(true)} style={{display:"block",width:"100%",padding:"9px",fontSize:11,fontWeight:600,color:T.accent,background:"transparent",border:"none",borderTop:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.sans}}>
+            View {items.length-5} more →
+          </button>
+        )}
+        {showAllFeed&&items.length>5&&(
+          <button onClick={()=>setShowAllFeed(false)} style={{display:"block",width:"100%",padding:"9px",fontSize:11,fontWeight:600,color:T.textSub,background:"transparent",border:"none",borderTop:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.sans}}>
+            ↑ Show less
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1529,7 +1541,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing})
   const {s,p,pc,loading:ld}=stock;
   const ch=pct(p||0,pc||1);
   return(
-    <div onClick={onClick} style={{display:"flex",alignItems:"center",padding:"10px 16px",borderBottom:`1px solid ${T.border}`,background:selected?T.accentBg:"transparent",cursor:"pointer",transition:"background 0.1s",gap:10}}>
+    <div onClick={onClick} style={{display:"flex",alignItems:"center",padding:"10px 16px 10px 14px",borderBottom:`1px solid ${T.border}`,background:selected?T.accentBg:"transparent",cursor:"pointer",transition:"background 0.1s",gap:10,minHeight:48}}>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontFamily:T.sans,fontSize:13,fontWeight:700,color:T.text}}>{s}</div>
         <div style={{fontSize:10,color:T.textSub,fontFamily:T.sans}}>{ld?"Fetching…":(names[s]||s)}</div>
@@ -1745,7 +1757,7 @@ function YFInsights({symbol,price,T}){
 
 
 /* ════════════════════════════════════════════════════
-   DEEP ANALYSIS — AI-powered stock analysis (Phase C)
+   DEEP ANALYSIS — uses /api/claude directly, no separate deploy needed
 ════════════════════════════════════════════════════ */
 function DeepAnalysis({symbol,T}){
   const [data,setData]=useState(null);
@@ -1753,106 +1765,98 @@ function DeepAnalysis({symbol,T}){
   const [error,setError]=useState(null);
   const CACHE_KEY=`deepanalysis_${symbol}_${new Date().toDateString()}`;
 
-  // Load from cache on mount
   useEffect(()=>{
-    try{
-      const cached=localStorage.getItem(CACHE_KEY);
-      if(cached){const d=JSON.parse(cached);if(d?.movement?.length)setData(d);}
-    }catch{}
+    try{const c=localStorage.getItem(CACHE_KEY);if(c){const d=JSON.parse(c);if(d?.movement?.length)setData(d);}}catch{}
   },[CACHE_KEY]);
 
-  const generate=()=>{
+  const generate=async()=>{
     setLoading(true);setError(null);
-    fetch(`/api/deepanalysis?symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(30000)})
-      .then(r=>{
-        if(r.status===404)throw new Error("api/deepanalysis.js not yet deployed — add it to your repo and push to Vercel");
-        if(!r.ok)throw new Error(`Server error ${r.status}`);
-        return r.json();
-      })
-      .then(d=>{
-        if(!d.movement?.length)throw new Error("Empty response");
-        setData(d);
-        try{localStorage.setItem(CACHE_KEY,JSON.stringify(d));}catch{}
-      })
-      .catch(e=>setError(e.message))
-      .finally(()=>setLoading(false));
+    try{
+      // Fetch context data client-side using existing functions
+      const [analyst,news,earn]=await Promise.all([
+        fetchBestAnalystData(symbol),
+        fetchYFNews(symbol,5),
+        fetchEarningsHistory(symbol),
+      ]);
+      const a=analyst||{};const earns=(earn||[]).slice(0,4);
+      const beatCt=earns.filter(q=>q.beat===true).length;
+      const earnsText=earns.length?earns.map(q=>`Q${q.quarter||"?"} ${q.year||""}: ${q.beat===true?"BEAT":q.beat===false?"MISS":"N/A"}${q.surprisePercent!=null?` (${q.surprisePercent>0?"+":""}${q.surprisePercent.toFixed(1)}%)`:""}  EPS $${q.actual??"-"} vs $${q.estimate??"-"}`).join("; "):"No earnings data";
+      const newsText=(news||[]).slice(0,4).map((n,i)=>`${i+1}. ${n.title||n.h||""}`).join("; ")||"No recent news";
+      const ctx=`STOCK: ${symbol}
+ANALYST: ${a.recommendationKey||"N/A"} (${a.numberOfAnalysts||0} analysts) | Target avg $${a.targetMeanPrice?.toFixed(2)||"-"} high $${a.targetHighPrice||"-"} low $${a.targetLowPrice||"-"}
+BUCKETS: SB${a.buckets?.strongBuy||0} B${a.buckets?.buy||0} H${a.buckets?.hold||0} S${a.buckets?.sell||0} SS${a.buckets?.strongSell||0}
+PE: ${a.peRatioTTM?.toFixed(1)||"N/A"}x | Beta: ${a.beta?.toFixed(2)||"N/A"} | 52W: $${a.week52Low||"-"}–$${a.week52High||"-"}
+EARNINGS (${beatCt}/${earns.length} beats): ${earnsText}
+NEWS: ${newsText}`;
+      const prompt=`Analyze ${symbol} using ONLY this data. Rules: every bullet must cite a specific number; no generic phrases; max 20 words each.
+${ctx}
+Return ONLY valid JSON:
+{"movement":["b1","b2","b3"],"bulls":["b1","b2","b3"],"bears":["b1","b2","b3"],"oneLiner":"one sentence thesis"}`;
+      const res=await fetch("/api/claude",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:700,messages:[{role:"user",content:prompt}]})
+      });
+      if(!res.ok)throw new Error(`API error ${res.status}`);
+      const raw=await res.json();
+      const txt=(raw.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+      const match=txt.match(/\{[\s\S]*\}/);
+      if(!match)throw new Error("No JSON in response");
+      const parsed=JSON.parse(match[0]);
+      if(!parsed.movement?.length)throw new Error("Empty analysis");
+      parsed.generatedAt=new Date().toISOString();
+      setData(parsed);
+      try{localStorage.setItem(CACHE_KEY,JSON.stringify(parsed));}catch{}
+    }catch(e){setError(e.message);}
+    finally{setLoading(false);}
   };
 
-  const sectionConfig=[
+  const sections=[
     {key:"movement",label:"Why This Stock Moved",color:"#7C6FF7",icon:"◉"},
     {key:"bulls",   label:"Bull Case",           color:T.up,     icon:"▲"},
     {key:"bears",   label:"Bear Case",           color:T.down,   icon:"▼"},
   ];
 
-  if(!data){
-    return(
-      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:20,textAlign:"center"}}>
-        {error&&<div style={{fontSize:11,color:T.down,marginBottom:12,fontFamily:T.sans}}>⚠ {error}</div>}
-        <div style={{fontSize:12,color:T.textSub,marginBottom:16,fontFamily:T.sans,lineHeight:1.5}}>
-          Claude will analyze {symbol}'s price performance, analyst consensus,<br/>
-          earnings history, and recent news to generate a data-backed view.
-        </div>
-        <button onClick={generate} disabled={loading}
-          style={{padding:"10px 24px",borderRadius:10,border:"none",cursor:loading?"not-allowed":"pointer",
-            background:loading?T.border:`linear-gradient(135deg,#6366F1,#7C6FF7)`,
-            color:loading?T.textSub:"#fff",fontSize:13,fontWeight:700,fontFamily:T.sans,
-            boxShadow:loading?"none":"0 4px 16px rgba(99,102,241,0.35)",
-            transition:"all 0.15s"}}>
-          {loading?"Generating analysis…":"✦ Generate AI Analysis"}
-        </button>
-        {loading&&(
-          <div style={{fontSize:10,color:T.textSub,marginTop:10,fontFamily:T.sans}}>
-            Fetching data + calling Claude… usually 5–10s
-          </div>
-        )}
-      </div>
-    );
-  }
+  if(!data)return(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:20,textAlign:"center"}}>
+      {error&&<div style={{fontSize:11,color:T.down,marginBottom:10,fontFamily:T.sans}}>⚠ {error}</div>}
+      <div style={{fontSize:12,color:T.textSub,marginBottom:16,lineHeight:1.55}}>Claude will analyze {symbol}'s analyst consensus,<br/>earnings history, and recent news — no extra API file needed.</div>
+      <button onClick={generate} disabled={loading} style={{padding:"10px 24px",borderRadius:10,border:"none",cursor:loading?"not-allowed":"pointer",background:loading?T.border:"linear-gradient(135deg,#6366F1,#7C6FF7)",color:loading?T.textSub:"#fff",fontSize:13,fontWeight:700,boxShadow:loading?"none":"0 4px 16px rgba(99,102,241,0.35)"}}>
+        {loading?"Generating… (10-20s)":"✦ Generate AI Analysis"}
+      </button>
+    </div>
+  );
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-      {/* One-liner thesis */}
-      {data.oneLiner&&(
-        <div style={{background:`linear-gradient(135deg,#6366F118,#7C6FF710)`,border:"1px solid #6366F130",borderRadius:10,padding:"12px 16px"}}>
-          <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:"#7C6FF7",marginBottom:5}}>AI Thesis</div>
-          <div style={{fontSize:13,color:T.text,lineHeight:1.55,fontStyle:"italic"}}>"{data.oneLiner}"</div>
-        </div>
-      )}
-
-      {/* Three sections */}
-      {sectionConfig.map(({key,label,color,icon})=>(
+      {data.oneLiner&&<div style={{background:"linear-gradient(135deg,#6366F118,#7C6FF710)",border:"1px solid #6366F130",borderRadius:10,padding:"12px 16px"}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:"#7C6FF7",marginBottom:5}}>AI Thesis</div>
+        <div style={{fontSize:13,color:T.text,lineHeight:1.55,fontStyle:"italic"}}>"{data.oneLiner}"</div>
+      </div>}
+      {sections.map(({key,label,color,icon})=>(
         <div key={key} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,padding:"9px 14px",borderBottom:`1px solid ${T.border}`,background:`${color}0A`}}>
             <span style={{color,fontWeight:700,fontSize:11}}>{icon}</span>
             <span style={{fontSize:11,fontWeight:700,color:T.text}}>{label}</span>
           </div>
-          <div style={{padding:"6px 0"}}>
+          <div style={{padding:"4px 0"}}>
             {(data[key]||[]).map((bullet,i)=>(
               <div key={i} style={{display:"flex",gap:10,padding:"8px 14px",borderBottom:i<(data[key].length-1)?`1px solid ${T.border}`:"none"}}>
-                <span style={{color,fontWeight:700,fontSize:11,flexShrink:0,paddingTop:1}}>
-                  {key==="bulls"?`${i+1}.`:key==="bears"?`${i+1}.`:"•"}
-                </span>
+                <span style={{color,fontWeight:700,fontSize:11,flexShrink:0,paddingTop:1}}>•</span>
                 <span style={{fontSize:12,color:T.textSub,lineHeight:1.55}}>{bullet}</span>
               </div>
             ))}
           </div>
         </div>
       ))}
-
-      {/* Footer: generated time + regenerate */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 2px"}}>
-        <span style={{fontSize:9,color:T.textSub,fontFamily:T.sans}}>
-          Generated {data.generatedAt?new Date(data.generatedAt).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}):"today"} · Cached until midnight
-        </span>
-        <button onClick={()=>{setData(null);setError(null);}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontFamily:T.sans}}>
-          Regenerate ↻
-        </button>
+      <div style={{display:"flex",justifyContent:"space-between",padding:"4px 2px"}}>
+        <span style={{fontSize:9,color:T.textSub}}>Generated {data.generatedAt?new Date(data.generatedAt).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}):"today"} · Cached until midnight</span>
+        <button onClick={()=>{setData(null);setError(null);}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer"}}>Regenerate ↻</button>
       </div>
     </div>
   );
 }
 
-// Simple stock news tab component
+
 function StockNews({symbol,T}){
   const [news,setNews]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -1971,7 +1975,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
 function YahooRecommendations({stocks,T,refreshKey}){
   const [recs,setRecs]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [open,setOpen]=useState(true);
+  const [open,setOpen]=useState(false); // start collapsed to save space
   const key=stocks.filter(s=>s.p>0).slice(0,6).map(s=>s.s).join(",");
 
   const load=useCallback(async()=>{
@@ -2537,7 +2541,7 @@ export default function StockScreener(){
         </div>
       )}
       {viewMode==="grid"
-        ?<div style={{display:"grid",gridTemplateColumns:selected&&!isMobile?"1fr":"repeat(auto-fill,minmax(155px,1fr))",gap:10}}>
+        ?<div style={{display:"grid",gridTemplateColumns:selected&&!isMobile?"1fr":"repeat(auto-fill,minmax(160px,1fr))",gap:10,alignItems:"start"}}>
            {stocks.map(st=>(
              <GridCard key={st.s} stock={st} selected={selected?.s===st.s}
                onClick={()=>setSelected(s=>s?.s===st.s?null:st)}
