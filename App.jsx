@@ -833,6 +833,10 @@ function buildVolumeProfile(data, buckets=30){
   return profile;
 }
 
+// CandleChart SVG geometry — module-level so hooks can reference them
+const CC_VW=900,CC_VH=210,CC_PAD={t:8,r:44,b:22,l:54};
+const CC_W=CC_VW-CC_PAD.l-CC_PAD.r, CC_H=CC_VH-CC_PAD.t-CC_PAD.b;
+
 function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,T}){
   const [vS,setVS]=useState(0);
   const [vE,setVE]=useState(()=>data.length);
@@ -860,19 +864,23 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
 
-  // Crosshair state
+  // Crosshair — uses RAF + correct SVG coordinate conversion
   const [hoverI,setHoverI]=useState(null);
-  const onSVGMove=(e)=>{
-    const rect=divRef.current?.getBoundingClientRect();
-    if(!rect)return;
-    const xInChart=e.clientX-rect.left;
-    const pctX=(xInChart-Pad.l)/W;
-    const idx=Math.floor(pctX*visData.length);
-    setHoverI(idx>=0&&idx<visData.length?idx:null);
-  };
-  const onSVGLeave=()=>setHoverI(null);
-  const VW=900,VH=210,Pad={t:8,r:44,b:22,l:54};
-  const W=VW-Pad.l-Pad.r,H=VH-Pad.t-Pad.b;
+  const rafRef=useRef(null);
+  const onSVGMove=useCallback((e)=>{
+    if(rafRef.current)cancelAnimationFrame(rafRef.current);
+    rafRef.current=requestAnimationFrame(()=>{
+      const rect=divRef.current?.getBoundingClientRect();
+      if(!rect)return;
+      // Use module-level CC_ constants — safe from TDZ
+      const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
+      const idx=Math.floor((svgX-CC_PAD.l)/CC_W*visData.length);
+      setHoverI(idx>=0&&idx<visData.length?idx:null);
+    });
+  },[visData.length]); // CC_ constants never change — omit from deps
+  const onSVGLeave=()=>{if(rafRef.current)cancelAnimationFrame(rafRef.current);setHoverI(null);};
+  // Alias module constants locally for readability in render below
+  const VW=CC_VW,VH=CC_VH,Pad=CC_PAD,W=CC_W,H=CC_H;
   if(!visData.length)return null;
   const prices=visData.flatMap(d=>[d.high,d.low]);
   const minP=Math.min(...prices)*0.997,maxP=Math.max(...prices)*1.003,rng=maxP-minP||1;
@@ -916,32 +924,42 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
         {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
         {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
         {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
-        {/* ── Crosshair ─────────────────────────────────── */}
+        {/* ── Crosshair — Google Finance style ─────────────────── */}
         {hoverI!=null&&visData[hoverI]&&(()=>{
           const bar=visData[hoverI];
           const cx=sx(hoverI);
-          const tip={o:bar.open?.toFixed(2),h:bar.high?.toFixed(2),l:bar.low?.toFixed(2),c:bar.close?.toFixed(2),v:bar.volume?(bar.volume/1e6).toFixed(2)+"M":"—"};
-          // Tooltip box — flip to left half if near right edge
-          const tipW=140,tipH=74,tipX=cx+8>VW-Pad.r-tipW?cx-tipW-8:cx+8;
-          const tipY=Pad.t+4;
-          return(
-            <g style={{pointerEvents:"none"}}>
-              {/* Vertical crosshair line */}
-              <line x1={cx} x2={cx} y1={Pad.t} y2={Pad.t+H} stroke={bar.isGreen?T.up:T.down} strokeWidth={0.7} strokeDasharray="3,3" opacity={0.6}/>
-              {/* Price label on right axis */}
-              <rect x={Pad.l+W} y={sy(bar.close)-9} width={Pad.r-2} height={18} rx={3} fill={bar.isGreen?T.up:T.down}/>
-              <text x={Pad.l+W+(Pad.r-2)/2} y={sy(bar.close)+1} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700} dominantBaseline="middle">{fY(bar.close)}</text>
-              {/* OHLCV tooltip box */}
-              <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={5} fill={T.surface} stroke={T.border} strokeWidth={0.8} opacity={0.96}/>
-              <text x={tipX+8} y={tipY+12} fill={T.textSub} fontSize={8} fontFamily="monospace">{bar.date}</text>
-              {[["O",tip.o],["H",tip.h],["L",tip.l],["C",tip.c],["V",tip.v]].map(([lbl,val],i)=>(
-                <g key={lbl}>
-                  <text x={tipX+8+(i<4?i*26:0)} y={tipY+(i<4?30:52)} fill={lbl==="H"?T.up:lbl==="L"?T.down:lbl==="C"?bar.isGreen?T.up:T.down:T.textSub} fontSize={8} fontFamily="monospace" fontWeight={700}>{lbl}</text>
-                  <text x={tipX+8+(i<4?i*26:0)+8} y={tipY+(i<4?30:52)} fill={T.text} fontSize={8} fontFamily="monospace">{val}</text>
-                </g>
-              ))}
-            </g>
-          );
+          const cy=sy(bar.close);
+          const col=bar.isGreen?T.up:T.down;
+          const tipW=168,tipH=58;
+          const tipX=cx+12+tipW>VW-Pad.r?cx-tipW-12:cx+12;
+          const tipY=Math.max(Pad.t+2,Math.min(cy-tipH/2,Pad.t+H-tipH-2));
+          return(<g style={{pointerEvents:"none"}}>
+            {/* Vertical crosshair line */}
+            <line x1={cx} x2={cx} y1={Pad.t} y2={Pad.t+H}
+              stroke={T.textSub} strokeWidth={0.8} strokeDasharray="4,3" opacity={0.5}/>
+            {/* Horizontal guide to Y-axis */}
+            <line x1={Pad.l} x2={cx} y1={cy} y2={cy}
+              stroke={col} strokeWidth={0.5} strokeDasharray="2,3" opacity={0.35}/>
+            {/* Price dot on close */}
+            <circle cx={cx} cy={cy} r={4.5} fill={col} stroke={T.bg} strokeWidth={1.5}/>
+            {/* Price label on left Y-axis */}
+            <rect x={1} y={cy-9} width={Pad.l-3} height={18} rx={3} fill={col}/>
+            <text x={(Pad.l-3)/2+1} y={cy+1} textAnchor="middle" fill="#fff"
+              fontSize={8} fontWeight={700} dominantBaseline="middle">{fY(bar.close)}</text>
+            {/* OHLCV tooltip */}
+            <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={6}
+              fill={T.surface} stroke={T.border} strokeWidth={0.8} opacity={0.97}/>
+            <text x={tipX+10} y={tipY+13} fill={T.textSub} fontSize={8.5} fontFamily="monospace">{bar.date}</text>
+            {[["O",bar.open,"#94A3B8"],["H",bar.high,T.up],["L",bar.low,T.down],["C",bar.close,col]].map(([l,v,c],i)=>(
+              <g key={l}>
+                <text x={tipX+10+i*40} y={tipY+30} fill={T.textSub} fontSize={8} fontFamily="monospace">{l}</text>
+                <text x={tipX+18+i*40} y={tipY+30} fill={c} fontSize={8} fontWeight={700} fontFamily="monospace">{fY(v)}</text>
+              </g>
+            ))}
+            {bar.volume>0&&<text x={tipX+10} y={tipY+47} fill={T.textSub} fontSize={8} fontFamily="monospace">
+              Vol <tspan fill={T.text} fontWeight={700}>{bar.volume>1e9?(bar.volume/1e9).toFixed(1)+"B":bar.volume>1e6?(bar.volume/1e6).toFixed(1)+"M":bar.volume>1e3?(bar.volume/1e3).toFixed(0)+"K":bar.volume}</tspan>
+            </text>}
+          </g>);
         })()}
       </svg>
     </div>
@@ -2284,54 +2302,44 @@ export default function StockScreener(){
     setTimeout(()=>runRefresh(curTab.stocks),600);
   },[]);// eslint-disable-line
 
-  // Core refresh — accepts any stock list so it works on mount and tab switch
+  // Core refresh — fetches prices for ALL tabs at once
   const runRefresh=useCallback(async(stockList)=>{
-    const valid=(stockList||[]).filter(s=>!s.loading&&s.s);
     setRefreshing(true);
 
-    const allSymbols=[...new Set([...valid.map(s=>s.s),...INDICES.map(i=>i.s)])];
+    // Collect symbols from EVERY tab + indices (not just current tab)
+    const allTabSyms=[...new Set(tabs.flatMap(t=>t.stocks.map(s=>s.s)))];
+    const allSyms=[...new Set([...allTabSyms,...INDICES.map(i=>i.s)])];
 
-    // ── Step 1: Yahoo Finance (fast, real-time) ──────────────────
-    let priceMap=await fetchYFQuotes(allSymbols);
+    // ── Step 1: Finnhub via /api/quotes ─────────────────────────────────
+    let priceMap=await fetchYFQuotes(allSyms);
 
-    // ── Step 2: Claude fallback for any missing symbols ──────────
-    const missing=allSymbols.filter(s=>!priceMap[s]||priceMap[s].p===0);
-    if(missing.length>0){
-      const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
-      const template=Object.fromEntries(missing.map(s=>[s,{p:0,pc:0}]));
-      try{
-        const res=await fetch("/api/claude",{
-          method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({
-            model:"claude-sonnet-4-6",max_tokens:800,
-            tools:[{type:"web_search_20250305",name:"web_search"}],
-            messages:[{role:"user",content:`Today is ${today}. Search the web for current prices of: ${missing.join(", ")}. Fill in this JSON with real prices (replace zeros):\n${JSON.stringify(template)}\nOutput JSON only.`}]
-          })
-        });
-        const d=await res.json();
-        const txt=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
-        const parsed=parseJSON(txt)||{};
-        missing.forEach(s=>{
-          const e=parsed[s]||parsed[s.toLowerCase()];
-          if(e){const p=Number(e.p||e.price||0),pc=Number(e.pc||e.prevClose||p*0.99);if(p>0)priceMap[s]={p,pc};}
-        });
-      }catch{}
+    // ── Step 2: Simple fetch fallback for any missing (no Claude needed) ─
+    const missing=allSyms.filter(s=>!priceMap[s]||priceMap[s].p===0);
+    if(missing.length>0&&missing.length<allSyms.length){
+      // Retry missing symbols individually with a short delay
+      await Promise.allSettled(missing.map(async sym=>{
+        try{
+          const r=await fetch(`/api/quotes?symbols=${encodeURIComponent(sym)}`,{signal:AbortSignal.timeout(6000)});
+          if(!r.ok)return;
+          const d=await r.json();
+          if(d[sym]?.p>0)priceMap[sym]=d[sym];
+        }catch{}
+      }));
     }
 
-    // ── Step 3: Apply updates ────────────────────────────────────
+    // ── Step 3: Update ALL tabs + indices ────────────────────────────────
     setIndices(prev=>prev.map(idx=>{
       const u=priceMap[idx.s];
       return u?.p>0?{...idx,p:u.p,pc:u.pc}:idx;
     }));
-    if(valid.length>0){
-      setTabs(prev=>prev.map(t=>t.id===activeTab?{
-        ...t,stocks:t.stocks.map(s=>{
-          const u=priceMap[s.s];
-          return u?.p>0?{...s,p:u.p,pc:u.pc}:s;
-        })
-      }:t));
-    }
-    // Update names from Yahoo data
+    setTabs(prev=>prev.map(t=>({
+      ...t,
+      stocks:t.stocks.map(s=>{
+        const u=priceMap[s.s];
+        return u?.p>0?{...s,p:u.p,pc:u.pc}:s;
+      })
+    })));
+    // Update company names
     Object.entries(priceMap).forEach(([sym,d])=>{if(d.name&&d.name!==sym)setNames(n=>({...n,[sym]:d.name}));});
 
     // ── Step 4: Market news from Yahoo Finance ───────────────────
