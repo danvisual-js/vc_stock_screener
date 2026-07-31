@@ -522,30 +522,27 @@ async function fetchYFChart(symbol, tf){
   // Then try with pre/post market if supported
   const urls=[base];
   if(prePost)urls.push(base+"&includePrePost=true"); // appended as fallback
-  for(const url of urls.slice().reverse()){ // try prePost first, fallback to regular
+  for(const url of urls){ // try regular first (reliable), then prePost
     try{
     const data=await yfFetch(url);
     const res=data?.chart?.result?.[0];
-    if(!res)return null;
+    if(!res)continue; // ← was return null — now tries next URL
     const ts=res.timestamp||[];
     const q=res.indicators?.quote?.[0]||{};
     const isIntra=barMin<1440;
     const multiDay=range!=="1d";
-    // ET offset — use UTC-4 (EDT covers most of the trading year)
-    const ET_OFF=4*3600; // seconds
+    const ET_OFF=4*3600;
     let prevDayStr="";
     const bars=ts.map((t,i)=>{
       const open=q.open?.[i]||0,close=q.close?.[i]||0;
       const high=q.high?.[i]||0,low=q.low?.[i]||0;
       const volume=q.volume?.[i]||0;
       if(!close||!high)return null;
-      // Robust ET time using raw UTC offset (no Intl timezone needed)
       const etTs=t-ET_OFF;
       const etH=Math.floor((etTs%86400)/3600);
       const etM=Math.floor((etTs%3600)/60);
       const etMins=etH*60+etM;
       const isExtended=isIntra&&(etMins<570||etMins>=960);
-      // Display labels
       const d=new Date(t*1000);
       const dayLabel=d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
       const timeLabel=`${etH===0||etH===12?12:etH%12}:${String(etM).padStart(2,"0")} ${etH<12?"AM":"PM"}`;
@@ -556,7 +553,7 @@ async function fetchYFChart(symbol, tf){
       if(!isExtended)prevDayStr=dayLabel;
       return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
     }).filter(Boolean);
-    return bars.length>5?bars:null;
+    if(bars.length>5)return bars;
     }catch(e){console.warn("chart attempt failed:",e);}
   }
   return null;
@@ -1120,7 +1117,7 @@ function IndexChart({index,T}){
     fetchYFChart(index.s,tf).then(data=>{
       if(cancelled)return;
       if(data?.length>5){setRawChart(data);}
-      else{const{barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];setRawChart(genBars(index.p,pct(index.p,index.pc),barMin,n));}
+      else{setRawChart(getChartData(index.p||100,pct(index.p||100,index.pc||100),tf));}
       setChartLoading(false);
     });
     return()=>{cancelled=true;};
@@ -1650,7 +1647,11 @@ function DeepAnalysis({symbol,T}){
   const generate=()=>{
     setLoading(true);setError(null);
     fetch(`/api/deepanalysis?symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(30000)})
-      .then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();})
+      .then(r=>{
+        if(r.status===404)throw new Error("api/deepanalysis.js not yet deployed — add it to your repo and push to Vercel");
+        if(!r.ok)throw new Error(`Server error ${r.status}`);
+        return r.json();
+      })
       .then(d=>{
         if(!d.movement?.length)throw new Error("Empty response");
         setData(d);
@@ -1778,7 +1779,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
     fetchYFChart(selected.s,tf).then(data=>{
       if(cancelled)return;
       if(data?.length>5){setRawChart(data);}
-      else{const{barMin,n}=TIMEFRAMES[tf]||TIMEFRAMES["5m"];setRawChart(genBars(selected.p,pct(selected.p,selected.pc),barMin,n));}
+      else{setRawChart(getChartData(selected.p||100,pct(selected.p||100,selected.pc||100),tf));}
       setChartLoading(false);
     });
     return()=>{cancelled=true;};
@@ -1824,14 +1825,14 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
       {/* ── AI Deep Analysis ─────────────────────────── */}
       <div style={{marginTop:10}}>
         <div style={{display:"flex",gap:0,marginBottom:10,background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-          {[["analysis","✦ AI Analysis"],["data","Analyst Data"],["news","News"]].map(([id,lbl])=>{
+          {[["analysis","✦ AI Analysis"],["data","Analyst Data"]].map(([id,lbl])=>{
             const active=detailView===id;
             return(
               <button key={id} onClick={()=>setDetailView(id)}
                 style={{flex:1,padding:"8px 4px",border:"none",fontSize:11,cursor:"pointer",fontWeight:active?700:400,
                   background:active?`linear-gradient(135deg,#6366F1,#7C6FF7)`:"transparent",
                   color:active?"#fff":T.textSub,fontFamily:T.sans,transition:"all 0.12s",
-                  borderRight:id!=="news"?`1px solid ${T.border}`:"none"}}>
+                  borderRight:id!=="data"?`1px solid ${T.border}`:"none"}}>
                 {lbl}
               </button>
             );
@@ -1839,7 +1840,6 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
         </div>
         {detailView==="analysis"&&<DeepAnalysis symbol={selected.s} T={T}/>}
         {detailView==="data"&&<YFInsights symbol={selected.s} price={selected.p} T={T}/>}
-        {detailView==="news"&&<StockNews symbol={selected.s} T={T}/>}
       </div>
     </div>
   );
@@ -2564,7 +2564,7 @@ export default function StockScreener(){
       )}
 
       {/* ── RECOMMENDATIONS ──────────────────────── */}
-      <YahooRecommendations stocks={stocks} T={T} refreshKey={refreshKey}/>
+      {!selected&&<YahooRecommendations stocks={stocks} T={T} refreshKey={refreshKey}/>}
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
         Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
