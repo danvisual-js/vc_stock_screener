@@ -215,48 +215,123 @@ async function fetchEarningsHistory(symbol){
 }
 
 // Build intelligence feed items from stocks + news + events
-function buildFeedItems(stocks,news,events,T){
+function buildWatchlistItems(stocks,events,T){
   const items=[];
-  // 1. Movers
   (stocks||[]).forEach(s=>{
     if(!s.p||!s.pc||s.loading)return;
     const ch=pct(s.p,s.pc);
     if(Math.abs(ch)<1.5)return;
-    items.push({id:`mv-${s.s}`,type:ch>0?"up":"down",color:ch>0?T.up:T.down,
-      icon:ch>0?"▲":"▼",sym:s.s,
-      title:`${s.s} ${ch>0?"+":""}${ch.toFixed(2)}% today`,
+    items.push({id:`mv-${s.s}`,color:ch>0?T.up:T.down,icon:ch>0?"▲":"▼",sym:s.s,
+      title:`${s.s} ${ch>0?"+":""}${ch.toFixed(2)}%`,
       detail:`$${f2(s.p)}`,time:"Live",priority:Math.min(Math.abs(ch)*12,100)});
   });
-  // 2. Upcoming earnings
   (events?.earnings||[]).slice(0,5).forEach(e=>{
-    const parts=[
-      e.epsEst!=null?`Est. EPS $${e.epsEst}`:null,
-      e.revEst!=null?`Rev $${e.revEst}B`:null,
-      e.when,
-      e.beatRate!=null?`${e.beatRate}% beat rate`:null,
-    ].filter(Boolean);
-    items.push({id:`earn-${e.s}`,type:"earnings",color:"#F59E0B",
-      icon:"📅",sym:e.s,
-      title:`${e.s} earnings · ${e.date}`,
-      detail:parts.join(" · "),time:e.date,priority:55});
+    const parts=[e.epsEst!=null?`Est. EPS $${e.epsEst}`:null,e.revEst!=null?`Rev $${e.revEst}B`:null,e.when,e.beatRate!=null?`${e.beatRate}% beat rate`:null].filter(Boolean);
+    items.push({id:`earn-${e.s}`,color:"#F59E0B",icon:"📅",sym:e.s,
+      title:`${e.s} earnings · ${e.date}`,detail:parts.join(" · "),time:e.date,priority:55});
   });
-  // 3. Macro events
   (events?.macro||[]).slice(0,2).forEach(e=>{
-    items.push({id:`mac-${e.event}`,type:"macro",color:"#A78BFA",
-      icon:"◎",title:e.event,
-      detail:`${e.impact==="high"?"High impact":"Market event"} · ${e.date}`,
-      time:e.date,priority:25});
-  });
-  // 4. News
-  (news||[]).slice(0,6).forEach((n,i)=>{
-    const col=n.sentiment==="positive"?T.up:n.sentiment==="negative"?T.down:T.textSub;
-    items.push({id:`news-${i}`,type:"news",color:col,
-      icon:n.sentiment==="positive"?"↑":n.sentiment==="negative"?"↓":"·",
-      title:n.h,detail:n.publisher||"",
-      time:tAgo(n.time),url:n.url,priority:20-i});
+    items.push({id:`mac-${e.event}`,color:"#A78BFA",icon:"◎",
+      title:e.event,detail:`${e.impact==="high"?"High impact":"Market event"} · ${e.date}`,time:e.date,priority:25});
   });
   return items.sort((a,b)=>b.priority-a.priority);
 }
+
+/* ════════════════════════════════════════════════════
+   INTELLIGENCE FEED — 2-col: Watchlist | News Articles
+════════════════════════════════════════════════════ */
+function IntelligenceFeed({stocks,news,symbols,T}){
+  const [events,setEvents]=useState(null);
+  useEffect(()=>{
+    setEvents({earnings:[],macro:KNOWN_EVENTS.macro.slice(0,3)});
+    fetch(`/api/events?symbols=${encodeURIComponent(symbols.join(","))}`)
+      .then(r=>r.ok?r.json():[]).then(live=>{
+        setEvents({
+          earnings:(live.length?live:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s))).slice(0,6),
+          macro:KNOWN_EVENTS.macro.slice(0,3),
+        });
+      }).catch(()=>setEvents({
+        earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,4),
+        macro:KNOWN_EVENTS.macro.slice(0,3),
+      }));
+  },[symbols.join(",")]);// eslint-disable-line
+
+  const watchlist=useMemo(()=>buildWatchlistItems(stocks,events,T),[stocks,events,T]);
+  const articles=(news||[]).filter(n=>n.h||n.title);
+  const [showAllNews,setShowAllNews]=useState(false);
+  const visNews=showAllNews?articles:articles.slice(0,5);
+
+  const ROW=(item,i,arr)=>(
+    <div key={item.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"9px 12px",
+      borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+      <div style={{width:3,height:3,borderRadius:"50%",background:item.color,marginTop:6,flexShrink:0}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:12,color:T.text,fontWeight:600,lineHeight:1.35,marginBottom:1}}>
+          {item.sym&&<span style={{fontFamily:"monospace",color:T.accent,marginRight:5}}>{item.sym}</span>}
+          {item.title.replace(item.sym+" ","").replace(item.sym+"·","").trim()}
+        </div>
+        {item.detail&&<div style={{fontSize:10,color:T.textSub}}>{item.detail}</div>}
+      </div>
+      <span style={{fontSize:9,color:T.textSub,flexShrink:0,paddingTop:2}}>{item.time}</span>
+    </div>
+  );
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+      {/* Left: Watchlist movers + earnings */}
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",boxShadow:T.shadow}}>
+        <div style={{padding:"10px 12px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`${T.accent}08`}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:5}}>
+            <I.TrendUp s={11} c={T.accent}/>Watchlist
+          </span>
+          <span style={{fontSize:9,color:T.textSub,fontWeight:600,textTransform:"uppercase",letterSpacing:".07em"}}>Live</span>
+        </div>
+        <div style={{maxHeight:340,overflowY:"auto"}}>
+          {!watchlist.length
+            ?<div style={{padding:"14px 12px",fontSize:11,color:T.textSub}}>Loading…</div>
+            :watchlist.map((item,i)=>ROW(item,i,watchlist))
+          }
+        </div>
+      </div>
+
+      {/* Right: News articles */}
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",boxShadow:T.shadow}}>
+        <div style={{padding:"10px 12px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`${T.accent}08`}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:5}}>
+            <I.News s={11} c={T.accent}/>Market News
+          </span>
+          <span style={{fontSize:9,color:T.textSub,fontWeight:600,textTransform:"uppercase",letterSpacing:".07em"}}>Today</span>
+        </div>
+        <div>
+          {!articles.length
+            ?<div style={{padding:"14px 12px",fontSize:11,color:T.textSub}}>Loading news…</div>
+            :visNews.map((n,i)=>(
+              <a key={i} href={n.url||n.link||"#"} target="_blank" rel="noreferrer"
+                style={{display:"flex",gap:8,padding:"9px 12px",borderBottom:i<visNews.length-1?`1px solid ${T.border}`:"none",textDecoration:"none",cursor:"pointer"}}>
+                <span style={{fontSize:11,color:n.sentiment==="positive"?T.up:n.sentiment==="negative"?T.down:T.textSub,flexShrink:0,paddingTop:2}}>
+                  {n.sentiment==="positive"?"↑":n.sentiment==="negative"?"↓":"·"}
+                </span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:11,color:T.text,lineHeight:1.4,marginBottom:2}}>{n.h||n.title}</div>
+                  <div style={{fontSize:9,color:T.textSub}}>{n.publisher} {n.time?`· ${tAgo(n.time)}`:""}</div>
+                </div>
+              </a>
+            ))
+          }
+          {articles.length>5&&(
+            <button onClick={()=>setShowAllNews(v=>!v)}
+              style={{display:"block",width:"100%",padding:"8px",fontSize:11,fontWeight:600,
+                color:T.accent,background:"transparent",border:"none",
+                borderTop:`1px solid ${T.border}`,cursor:"pointer"}}>
+              {showAllNews?`↑ Show less`:`View ${articles.length-5} more articles →`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 /* ════════════════════════════════════════════════════
    THEMES — Yahoo Finance / iOS Finance aesthetic
@@ -954,6 +1029,14 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const sx=i=>Pad.l+(i+0.5)*(W/visData.length);
   const cw=Math.max(2,(W/visData.length)*0.62);
   const step=Math.max(1,Math.round(visData.length/7));
+
+  // Pre-compute drawing previews (avoids IIFE-inside-JSX Babel issues)
+  const trendPrev=(drawMode==='trend'&&drawStart&&hoverI!=null&&visData[hoverI])?{
+    x1:Pad.l+(drawStart.barIdx-vStart+0.5)*(W/visData.length),
+    y1:sy(drawStart.price),
+    x2:sx(hoverI),y2:sy(visData[hoverI].close)
+  }:null;
+  const hlinePrevY=(drawMode==='hline'&&hoverI!=null&&visData[hoverI])?sy(visData[hoverI].close):null;
   const yTicks=Array.from({length:4},(_,i)=>minP+(rng/3)*i);
   const fY=p=>p>=10000?(p/1000).toFixed(0)+"K":p>=100?p.toFixed(0):p<1?p.toFixed(3):p.toFixed(2);
   const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
@@ -964,19 +1047,44 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       onMouseUp={(e)=>{onMU(e);onDrawingMouseUp();}} onMouseLeave={(e)=>{onMU(e);onSVGLeave();onDrawingMouseUp();}}
       onDoubleClick={resetZoom} onClick={onChartClick}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
-      {/* Drawing toolbar — always visible so user can enter draw mode */}
-      <div style={{position:"absolute",top:6,left:4,zIndex:10,display:"flex",gap:3,pointerEvents:"all"}}>
+      {/* Drawing toolbar — always visible, prominent placement */}
+      <div style={{position:"absolute",bottom:28,left:CC_PAD.l+4,zIndex:10,display:"flex",gap:4,pointerEvents:"all"}}>
         {[['hline','─','H-Line','#A78BFA'],['trend','/','Trend','#6366F1']].map(([mode,ico,lbl,col])=>(
           <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
-            title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point":lbl}
-            style={{padding:"2px 7px",fontSize:9,fontWeight:700,borderRadius:5,border:`1px solid ${drawMode===mode?col:T.border}`,background:drawMode===mode?`${col}25`:"rgba(15,16,24,0.85)",color:drawMode===mode?col:T.textSub,cursor:"pointer",backdropFilter:"blur(4px)"}}>
-            {ico}{drawMode===mode?" ✓":""}
+            title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point to finish":lbl}
+            style={{padding:"4px 10px",fontSize:11,fontWeight:700,borderRadius:6,
+              border:`1.5px solid ${drawMode===mode?col:T.border}`,
+              background:drawMode===mode?`${col}22`:"rgba(15,16,24,0.9)",
+              color:drawMode===mode?col:T.text,cursor:"pointer",
+              boxShadow:drawMode===mode?`0 0 0 1px ${col}40`:"none",
+              backdropFilter:"blur(4px)",display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:13,lineHeight:1}}>{ico}</span>
+            <span style={{fontSize:10}}>{drawMode===mode?(mode==='trend'&&drawStart?"pt2…":lbl+" ✓"):lbl}</span>
           </button>
         ))}
         {drawings.length>0&&<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
           title="Clear all drawings"
-          style={{padding:"2px 7px",fontSize:9,fontWeight:700,borderRadius:5,border:`1px solid ${T.border}`,background:"rgba(15,16,24,0.85)",color:T.down,cursor:"pointer",backdropFilter:"blur(4px)"}}>✕</button>}
+          style={{padding:"4px 10px",fontSize:10,fontWeight:700,borderRadius:6,border:`1.5px solid ${T.border}`,background:"rgba(15,16,24,0.9)",color:T.down,cursor:"pointer",backdropFilter:"blur(4px)"}}>
+          ✕ Clear all
+        </button>}
       </div>
+
+      {/* Selected drawing delete button — persistent HTML overlay (not in SVG) */}
+      {selDraw&&(()=>{
+        const d=drawings.find(x=>x.id===selDraw);
+        if(!d)return null;
+        // Position delete button near top-right of chart
+        return(
+          <div onClick={e=>{e.stopPropagation();setDrawings(prev=>prev.filter(x=>x.id!==selDraw));setSelDraw(null);}}
+            style={{position:"absolute",top:30,right:CC_PAD.r+6,zIndex:20,
+              padding:"4px 10px",fontSize:11,fontWeight:700,borderRadius:6,
+              border:`1.5px solid ${T.down}`,background:`${T.down}22`,
+              color:T.down,cursor:"pointer",pointerEvents:"all",
+              display:"flex",alignItems:"center",gap:5,backdropFilter:"blur(4px)"}}>
+            <I.X s={11} c={T.down}/> Delete line
+          </div>
+        );
+      })()}
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
         {/* Pre/after-hours shading — grey bands for extended hours regions */}
@@ -1028,46 +1136,43 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
         {/* ── Saved drawings ──────────────────────────────────────── */}
         {drawings.map(d=>{
           const isSel=selDraw===d.id;
-          const delBtn=(x,y)=>(
-            <g onClick={e=>{e.stopPropagation();setDrawings(p=>p.filter(x=>x.id!==d.id));setSelDraw(null);}} style={{cursor:"pointer"}}>
-              <rect x={x-8} y={y-8} width={16} height={16} rx={3} fill={T.down}/>
-              <text x={x} y={y+1} fontSize={8} fill="#fff" textAnchor="middle" dominantBaseline="middle">✕</text>
-            </g>
-          );
           if(d.type==='hline'){
             const y=sy(d.price);
             if(y<Pad.t||y>Pad.t+H)return null;
-            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)} onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}} style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
-              <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke={d.color} strokeWidth={isSel?2:1.2} strokeDasharray="6,3" opacity={0.85}/>
+            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)}
+              onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}}
+              style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
+              {/* Hit zone — wider invisible line for easier clicking */}
+              <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke="transparent" strokeWidth={12}/>
+              <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke={d.color} strokeWidth={isSel?2:1.2} strokeDasharray="6,3" opacity={isSel?1:0.85}/>
               <text x={Pad.l+W+3} y={y+1} fontSize={7.5} fill={d.color} dominantBaseline="middle">{fY(d.price)}</text>
-              {isSel&&delBtn(Pad.l+W-14,y)}
+              {isSel&&<circle cx={Pad.l} cy={y} r={4} fill={d.color} opacity={0.8}/>}
+              {isSel&&<circle cx={Pad.l+W} cy={y} r={4} fill={d.color} opacity={0.8}/>}
             </g>);
           }
           if(d.type==='trend'){
-            const vi1=d.p1.barIdx-vStart, vi2=d.p2.barIdx-vStart;
+            const vi1=d.p1.barIdx-vStart,vi2=d.p2.barIdx-vStart;
             if(vi1<-20||vi2<-20||vi1>visData.length+20||vi2>visData.length+20)return null;
-            const x1=Pad.l+(vi1+0.5)*(W/visData.length), y1=sy(d.p1.price);
-            const x2=Pad.l+(vi2+0.5)*(W/visData.length), y2=sy(d.p2.price);
-            const midX=(x1+x2)/2, midY=(y1+y2)/2;
-            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)} onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}} style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
-              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color} strokeWidth={isSel?2.5:1.5} opacity={0.9}/>
-              {isSel&&delBtn(midX,midY)}
+            const x1=Pad.l+(vi1+0.5)*(W/visData.length),y1=sy(d.p1.price);
+            const x2=Pad.l+(vi2+0.5)*(W/visData.length),y2=sy(d.p2.price);
+            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)}
+              onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}}
+              style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={14}/>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color} strokeWidth={isSel?2.5:1.5} opacity={isSel?1:0.9}/>
+              {isSel&&<circle cx={x1} cy={y1} r={4} fill={d.color}/>}
+              {isSel&&<circle cx={x2} cy={y2} r={4} fill={d.color}/>}
             </g>);
           }
           return null;
         })}
 
         {/* Preview line while drawing */}
-        {drawMode==='hline'&&hoverI!=null&&visData[hoverI]&&(
-          <line x1={Pad.l} x2={Pad.l+W} y1={sy(visData[hoverI].close)} y2={sy(visData[hoverI].close)}
-            stroke="#A78BFA" strokeWidth={0.8} strokeDasharray="4,2" opacity={0.5} style={{pointerEvents:"none"}}/>
-        )}
-        {drawMode==='trend'&&drawStart&&hoverI!=null&&visData[hoverI]&&(()=>{
-          const vi1=drawStart.barIdx-vStart;
-          const x1=Pad.l+(vi1+0.5)*(W/visData.length), y1=sy(drawStart.price);
-          const x2=sx(hoverI), y2=sy(visData[hoverI].close);
-          return<line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#6366F1" strokeWidth={1} strokeDasharray="4,2" opacity={0.7} style={{pointerEvents:"none"}}/>;
-        })()}
+        {hlinePrevY!==null&&<line x1={Pad.l} x2={Pad.l+W} y1={hlinePrevY} y2={hlinePrevY}
+          stroke="#A78BFA" strokeWidth={0.8} strokeDasharray="4,2" opacity={0.5} style={{pointerEvents:"none"}}/>}
+        {trendPrev&&drawStart&&<line x1={trendPrev.x1} y1={trendPrev.y1} x2={trendPrev.x2} y2={trendPrev.y2}
+          stroke="#6366F1" strokeWidth={1} strokeDasharray="4,2" opacity={0.7} style={{pointerEvents:"none"}}/>}
+        {trendPrev&&drawStart&&<circle cx={trendPrev.x1} cy={trendPrev.y1} r={4} fill="#6366F1" opacity={0.7} style={{pointerEvents:"none"}}/>}
 
         {/* ── Crosshair — Google Finance style ─────────────────── */}
         {hoverI!=null&&visData[hoverI]&&(()=>{
@@ -1321,77 +1426,6 @@ function IndexChart({index,T}){
 /* ════════════════════════════════════════════════════════
    INTELLIGENCE FEED — personalized stream for your watchlist
 ════════════════════════════════════════════════════════ */
-function IntelligenceFeed({stocks,news,symbols,T}){
-  const [events,setEvents]=useState(null);
-  useEffect(()=>{
-    setEvents({earnings:[],macro:KNOWN_EVENTS.macro.slice(0,3)});
-    fetch(`/api/events?symbols=${encodeURIComponent(symbols.join(","))}`)
-      .then(r=>r.ok?r.json():[]).then(live=>{
-        setEvents({
-          earnings:(live.length?live:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s))).slice(0,6),
-          macro:KNOWN_EVENTS.macro.slice(0,3),
-        });
-      }).catch(()=>setEvents({
-        earnings:KNOWN_EVENTS.earnings.filter(e=>symbols.includes(e.s)).slice(0,4),
-        macro:KNOWN_EVENTS.macro.slice(0,3),
-      }));
-  },[symbols.join(",")]);// eslint-disable-line
-
-  const items=useMemo(()=>buildFeedItems(stocks,news,events,T),[stocks,news,events,T]);
-  const [showAllFeed,setShowAllFeed]=useState(false);
-
-  const TYPE_BG={up:`${T.up}0A`,down:`${T.down}0A`,earnings:"#F59E0B0A",macro:"#A78BFA0A",news:"transparent"};
-
-  return(
-    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:14,boxShadow:T.shadow}}>
-      {/* Header */}
-      <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`${T.accent}08`}}>
-        <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
-          <I.TrendUp s={12} c={T.accent}/>Market Intelligence
-        </span>
-        <span style={{fontSize:9,color:T.textSub,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase"}}>Your Watchlist</span>
-      </div>
-
-      {/* Feed items */}
-      <div>
-        {!items.length&&(
-          <div style={{padding:"16px 14px",fontSize:11,color:T.textSub}}>Loading market data…</div>
-        )}
-        {items.slice(0,showAllFeed?items.length:5).map((item,i)=>(
-          <a key={item.id} href={item.url||undefined} target={item.url?"_blank":undefined} rel="noreferrer"
-            style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 14px",
-              borderBottom:i<items.length-1?`1px solid ${T.border}`:"none",
-              textDecoration:"none",background:TYPE_BG[item.type]||"transparent",cursor:item.url?"pointer":"default"}}>
-            {/* Colored left pip + icon */}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:3,flexShrink:0}}>
-              <div style={{width:3,height:3,borderRadius:"50%",background:item.color,marginBottom:3}}/>
-              <span style={{fontSize:11,color:item.color,fontWeight:700,lineHeight:1}}>{item.icon}</span>
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:12,color:T.text,fontWeight:item.sym?600:400,lineHeight:1.4,marginBottom:1}}>
-                {item.sym&&<span style={{fontFamily:"monospace",marginRight:4,color:T.accent}}>{item.sym}</span>}
-                {item.title.replace(item.sym+" ","").replace(item.sym+"·","").trim()}
-              </div>
-              {item.detail&&<div style={{fontSize:10,color:T.textSub,lineHeight:1.3}}>{item.detail}</div>}
-            </div>
-            <span style={{fontSize:9,color:T.textSub,fontWeight:500,flexShrink:0,paddingTop:2,whiteSpace:"nowrap"}}>{item.time}</span>
-          </a>
-        ))}
-        {!showAllFeed&&items.length>5&&(
-          <button onClick={()=>setShowAllFeed(true)} style={{display:"block",width:"100%",padding:"9px",fontSize:11,fontWeight:600,color:T.accent,background:"transparent",border:"none",borderTop:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.sans}}>
-            View {items.length-5} more →
-          </button>
-        )}
-        {showAllFeed&&items.length>5&&(
-          <button onClick={()=>setShowAllFeed(false)} style={{display:"block",width:"100%",padding:"9px",fontSize:11,fontWeight:600,color:T.textSub,background:"transparent",border:"none",borderTop:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.sans}}>
-            ↑ Show less
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /* ════════════════════════════════════════════════════════
    MARKET BAR  (slim top strip, replaces index cards)
 ════════════════════════════════════════════════════════ */
@@ -1933,11 +1967,10 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
-  const [detailView,setDetailView]=useState("data"); // open on Analyst Data by default // "analysis" | "data" | "news"
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
 
-  // Reset view when ticker changes
-  useEffect(()=>{ setDetailView("data"); },[selected.s]);
+  // Reset to first chart timeframe when ticker changes
+  useEffect(()=>{ setTf("5m"); },[selected.s]);
 
   useEffect(()=>{
     let cancelled=false;
@@ -1988,25 +2021,6 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
       {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
       {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T}/></div>);})()}
       <YFInsights symbol={selected.s} price={selected.p} T={T}/>
-      {/* ── AI Deep Analysis ─────────────────────────── */}
-      <div style={{marginTop:10}}>
-        <div style={{display:"flex",gap:0,marginBottom:10,background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-          {[["data","Analyst Data"],["analysis","✦ AI Analysis"]].map(([id,lbl])=>{
-            const active=detailView===id;
-            return(
-              <button key={id} onClick={()=>setDetailView(id)}
-                style={{flex:1,padding:"8px 4px",border:"none",fontSize:11,cursor:"pointer",fontWeight:active?700:400,
-                  background:active?`linear-gradient(135deg,#6366F1,#7C6FF7)`:"transparent",
-                  color:active?"#fff":T.textSub,fontFamily:T.sans,transition:"all 0.12s",
-                  borderRight:id!=="data"?`1px solid ${T.border}`:"none"}}>
-                {lbl}
-              </button>
-            );
-          })}
-        </div>
-        {detailView==="analysis"&&<DeepAnalysis symbol={selected.s} T={T}/>}
-        {detailView==="data"&&<YFInsights symbol={selected.s} price={selected.p} T={T}/>}
-      </div>
     </div>
   );
 }
