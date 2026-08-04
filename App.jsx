@@ -1957,8 +1957,12 @@ Return ONLY valid JSON:
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({symbol,context:ctx})
       });
-      if(!res.ok)throw new Error(`API error ${res.status}`);
       const raw=await res.json();
+      if(!res.ok){
+        // Surface the actual Anthropic error for debugging
+        const detail=raw.error||raw.anthropic_type||`HTTP ${res.status}`;
+        throw new Error(detail);
+      }
       if(raw.error)throw new Error(raw.error);
       const txt=JSON.stringify(raw);
       const parsed=raw.movement?raw:JSON.parse((txt.match(/\{[\s\S]*\}/)||["{}"])[0]);
