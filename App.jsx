@@ -918,10 +918,16 @@ function buildVolumeProfile(data, buckets=30){
 const CC_VW=900,CC_VH=210,CC_PAD={t:8,r:44,b:22,l:54};
 const CC_W=CC_VW-CC_PAD.l-CC_PAD.r, CC_H=CC_VH-CC_PAD.t-CC_PAD.b;
 
-function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T}){
+function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T,chartH=CC_VH}){
+  // Dynamic VH/H based on chartH prop — allows mobile to pass taller value
+  const VW=CC_VW, VH=chartH, Pad=CC_PAD;
+  const W=VW-Pad.l-Pad.r, H=VH-Pad.t-Pad.b;
   const [vS,setVS]=useState(0);
   const [vE,setVE]=useState(()=>data.length);
   const drag=useRef({on:false,x0:0,s0:0,e0:0});
+  // Pinch-to-zoom state (pointer-based, cross-platform)
+  const activePtr=useRef(new Map()); // pointerId → {x,y}
+  const pinchRef=useRef(null);       // {startDist, startVS, startVE}
   const divRef=useRef(null);
   const dsKey=`${data.length}|${data[0]?.date}|${data.at?.(-1)?.date}`;
   useEffect(()=>{setVS(0);setVE(data.length);},[dsKey]);// eslint-disable-line
@@ -945,6 +951,8 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
 
+
+
   // ── Drawing state (must be before onChartClick useCallback) ─────────────
   const DRAW_KEY=`drawings_${symbol||"x"}_${tf||"5m"}`;
   const [drawings,setDrawings]=useState(()=>{try{return JSON.parse(localStorage.getItem(DRAW_KEY)||"[]");}catch{return[];}});
@@ -955,16 +963,21 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const [draggingDraw,setDraggingDraw]=useState(null); // {id,startSvgX,startSvgY,orig}
   const chartRange=useRef({minP:0,rng:1}); // updated after minP computed
 
-  // Convert mouse event → SVG position + bar index + price
+  // Convert pointer/touch/mouse event → SVG position + bar index + price
   const svgPos=useCallback((e)=>{
     const rect=divRef.current?.getBoundingClientRect();
     if(!rect)return null;
-    const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
-    const svgY=(e.clientY-rect.top)/rect.height*CC_VH;
+    // Support mouse, pointer, and touch events
+    const clientX=e.touches?.[0]?.clientX??e.changedTouches?.[0]?.clientX??e.clientX;
+    const clientY=e.touches?.[0]?.clientY??e.changedTouches?.[0]?.clientY??e.clientY;
+    // Convert screen px → SVG units using actual chartH (not the 210 constant)
+    const svgX=(clientX-rect.left)/rect.width*CC_VW;
+    const svgY=(clientY-rect.top)/rect.height*chartH; // chartH not CC_VH — critical for mobile
     const barAbsIdx=Math.round((svgX-CC_PAD.l)/CC_W*visData.length)+vStart;
-    const price=chartRange.current.minP+(1-(svgY-CC_PAD.t)/CC_H)*chartRange.current.rng;
+    const svgH=chartH-CC_PAD.t-CC_PAD.b;
+    const price=chartRange.current.minP+(1-(svgY-CC_PAD.t)/svgH)*chartRange.current.rng;
     return{svgX,svgY,barAbsIdx,price};
-  },[vStart,visData.length]);
+  },[vStart,visData.length,chartH]);
 
   const onChartClick=useCallback((e)=>{
     if(!drawMode)return;
@@ -990,7 +1003,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onDrawingMouseMove=useCallback((e)=>{
     if(!draggingDraw)return;
     const pos=svgPos(e);if(!pos)return;
-    const dprice=(draggingDraw.startSvgY-pos.svgY)/CC_H*chartRange.current.rng;
+    const vhRef=chartH-CC_PAD.t-CC_PAD.b;const dprice=(draggingDraw.startSvgY-pos.svgY)/vhRef*chartRange.current.rng;
     const dbar=Math.round((pos.svgX-draggingDraw.startSvgX)/CC_W*visData.length);
     const{orig}=draggingDraw;
     setDrawings(prev=>prev.map(d=>{
@@ -1018,12 +1031,71 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   },[visData.length]);
   const onSVGLeave=()=>{if(rafRef.current)cancelAnimationFrame(rafRef.current);setHoverI(null);};
 
+  // ── Pinch-to-zoom + touch-drag (pointer-based, works on all devices) ─────
+  const onPtrDown=useCallback((e)=>{
+    activePtr.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    const ptrs=[...activePtr.current.values()];
+    if(ptrs.length===2){
+      // Two fingers — start pinch
+      const d=Math.hypot(ptrs[1].x-ptrs[0].x,ptrs[1].y-ptrs[0].y);
+      pinchRef.current={startDist:d,startVS:vStart,startVE:vEnd};
+      drag.current.on=false; // cancel single-drag mode
+    } else {
+      // One finger — start drag (same as mouse)
+      onMD(e);
+    }
+  },[vStart,vEnd,onMD]);
+
+  const onPtrMove=useCallback((e)=>{
+    activePtr.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    const ptrs=[...activePtr.current.values()];
+    if(ptrs.length===2&&pinchRef.current){
+      // Pinch zoom — scale visible range around the pinch midpoint
+      const d=Math.hypot(ptrs[1].x-ptrs[0].x,ptrs[1].y-ptrs[0].y);
+      const scale=pinchRef.current.startDist/Math.max(d,1);
+      const vis0=pinchRef.current.startVE-pinchRef.current.startVS;
+      const newVis=Math.min(data.length,Math.max(6,Math.round(vis0*scale)));
+      const mid=Math.round((pinchRef.current.startVS+pinchRef.current.startVE)/2);
+      const ns=Math.max(0,mid-Math.floor(newVis/2));
+      const ne=Math.min(data.length,ns+newVis);
+      setVS(ne-newVis);setVE(ne);
+    } else if(ptrs.length<=1){
+      // Single pointer — drag pan + crosshair
+      onMM(e);onSVGMove(e);onDrawingMouseMove(e);
+    }
+  },[data.length,onMM,onSVGMove,onDrawingMouseMove]);
+
+  const onPtrUp=useCallback((e)=>{
+    activePtr.current.delete(e.pointerId);
+    if(activePtr.current.size===0){pinchRef.current=null;onMU(e);onDrawingMouseUp();}
+    else if(activePtr.current.size===1){pinchRef.current=null;} // went from 2→1 finger
+  },[onMU,onDrawingMouseUp]);
+
+  const onPtrLeave=useCallback((e)=>{
+    activePtr.current.delete(e.pointerId);
+    if(activePtr.current.size===0){pinchRef.current=null;onMU(e);onSVGLeave();onDrawingMouseUp();}
+  },[onMU,onSVGLeave,onDrawingMouseUp]);
+
   // ── Chart geometry (after all hooks) ────────────────────────────────────
-  const VW=CC_VW,VH=CC_VH,Pad=CC_PAD,W=CC_W,H=CC_H;
   if(!visData.length)return null;
   const prices=visData.flatMap(d=>[d.high,d.low]);
   const minP=Math.min(...prices)*0.997,maxP=Math.max(...prices)*1.003,rng=maxP-minP||1;
   // Update chart range ref for click handler
+  // Pre-compute visible extended-hours bands for shading (avoids IIFE in SVG)
+  const visExtBands=(()=>{
+    const bands=[];let s=null;
+    visData.forEach((d,i)=>{
+      if(d.isExtended&&s===null)s=i;
+      else if(!d.isExtended&&s!==null){
+        // Pre-market = before 9:30 ET; after-market = after 16:00 ET
+        const t=visData[s]?._ts;
+        const etH=t?Math.floor(((t-4*3600)%86400)/3600):12;
+        bands.push({s,e:i-1,pre:etH<9});s=null;
+      }
+    });
+    if(s!==null)bands.push({s,e:visData.length-1,pre:false});
+    return bands;
+  })();
   chartRange.current={minP,rng};
   const sy=p=>Pad.t+H*(1-(p-minP)/rng);
   const sx=i=>Pad.l+(i+0.5)*(W/visData.length);
@@ -1042,31 +1114,39 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
   return(
     <div ref={divRef}
-      style={{position:"relative",cursor:drawMode?"crosshair":"default",userSelect:"none"}}
-      onMouseDown={onMD} onMouseMove={(e)=>{onMM(e);onSVGMove(e);onDrawingMouseMove(e);}}
-      onMouseUp={(e)=>{onMU(e);onDrawingMouseUp();}} onMouseLeave={(e)=>{onMU(e);onSVGLeave();onDrawingMouseUp();}}
+      style={{position:"relative",cursor:drawMode?"crosshair":"default",userSelect:"none",touchAction:"none"}}
+      onPointerDown={onPtrDown} onPointerMove={onPtrMove}
+      onPointerUp={onPtrUp} onPointerLeave={onPtrLeave} onPointerCancel={onPtrUp}
       onDoubleClick={resetZoom} onClick={onChartClick}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
       {/* Drawing toolbar — always visible, prominent placement */}
       <div style={{position:"absolute",bottom:28,left:CC_PAD.l+4,zIndex:10,display:"flex",gap:4,pointerEvents:"all"}}>
-        {[['hline','─','H-Line','#A78BFA'],['trend','/','Trend','#6366F1']].map(([mode,ico,lbl,col])=>(
-          <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
-            title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point to finish":lbl}
-            style={{padding:"4px 10px",fontSize:11,fontWeight:700,borderRadius:6,
-              border:`1.5px solid ${drawMode===mode?col:T.border}`,
-              background:drawMode===mode?`${col}22`:"rgba(15,16,24,0.9)",
-              color:drawMode===mode?col:T.text,cursor:"pointer",
-              boxShadow:drawMode===mode?`0 0 0 1px ${col}40`:"none",
-              backdropFilter:"blur(4px)",display:"flex",alignItems:"center",gap:4}}>
-            <span style={{fontSize:13,lineHeight:1}}>{ico}</span>
-            <span style={{fontSize:10}}>{drawMode===mode?(mode==='trend'&&drawStart?"pt2…":lbl+" ✓"):lbl}</span>
-          </button>
-        ))}
-        {drawings.length>0&&<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
-          title="Clear all drawings"
-          style={{padding:"4px 10px",fontSize:10,fontWeight:700,borderRadius:6,border:`1.5px solid ${T.border}`,background:"rgba(15,16,24,0.9)",color:T.down,cursor:"pointer",backdropFilter:"blur(4px)"}}>
-          ✕ Clear all
-        </button>}
+        {(()=>{
+          const mob=typeof window!=="undefined"&&window.innerWidth<640;
+          const bsz={padding:mob?"7px 14px":"4px 10px",fontSize:mob?13:11,minHeight:mob?44:undefined,minWidth:mob?80:undefined};
+          return [['hline','─','H-Line','#A78BFA'],['trend','/','Trend','#6366F1']].map(([mode,ico,lbl,col])=>(
+            <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
+              title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point to finish":lbl}
+              style={{...bsz,fontWeight:700,borderRadius:8,border:`1.5px solid ${drawMode===mode?col:T.border}`,
+                background:drawMode===mode?`${col}22`:"rgba(15,16,24,0.9)",
+                color:drawMode===mode?col:T.text,cursor:"pointer",
+                boxShadow:drawMode===mode?`0 0 0 1px ${col}40`:"none",
+                backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+              <span style={{fontSize:mob?16:13,lineHeight:1}}>{ico}</span>
+              <span>{drawMode===mode?(mode==='trend'&&drawStart?"pt2…":lbl+" ✓"):lbl}</span>
+            </button>
+          ));
+        })()}
+        {drawings.length>0&&(()=>{
+          const mob=typeof window!=="undefined"&&window.innerWidth<640;
+          return(<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
+            title="Clear all drawings"
+            style={{padding:mob?"7px 14px":"4px 10px",fontSize:mob?13:10,fontWeight:700,borderRadius:8,
+              border:`1.5px solid ${T.border}`,background:"rgba(15,16,24,0.9)",
+              color:T.down,cursor:"pointer",backdropFilter:"blur(4px)",minHeight:mob?44:undefined}}>
+            ✕ Clear all
+          </button>);
+        })()}
       </div>
 
       {/* Selected drawing delete button — persistent HTML overlay (not in SVG) */}
@@ -1087,22 +1167,13 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       })()}
       <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
         {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
-        {/* Pre/after-hours shading — grey bands for extended hours regions */}
-        {visData.some(d=>d.isExtended)&&(()=>{
-          const extBands=[];
-          let bandStart=null;
-          visData.forEach((d,i)=>{
-            if(d.isExtended&&bandStart===null)bandStart=i;
-            else if(!d.isExtended&&bandStart!==null){extBands.push({s:bandStart,e:i-1});bandStart=null;}
-          });
-          if(bandStart!==null)extBands.push({s:bandStart,e:visData.length-1});
-          return extBands.map((b,i)=>(
-            <rect key={i}
-              x={Pad.l+(b.s)*(W/visData.length)} y={Pad.t}
-              width={(b.e-b.s+1)*(W/visData.length)} height={H}
-              fill={T.textTert||"#1E293B"} opacity={0.35}/>
-          ));
-        })()}
+        {/* Pre/after-hours shading — pre-computed, no IIFE */}
+        {visExtBands.map((b,i)=>(
+          <rect key={i}
+            x={Pad.l+b.s*(W/visData.length)} y={Pad.t}
+            width={(b.e-b.s+1)*(W/visData.length)} height={H}
+            fill={b.pre?"#6366F1":"#94A3B8"} opacity={0.07}/>
+        ))}
         {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
         {/* Session boundary lines + candles */}
         {visData.map((d,i)=>{
@@ -1116,13 +1187,13 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
               <line x1={sx(i)-cw} x2={sx(i)-cw} y1={Pad.t} y2={Pad.t+H}
                 stroke={T.border} strokeWidth={0.8} strokeDasharray="2,3" opacity={0.7}/>
             )}
-            {/* Candle wick */}
+            {/* Candle wick — dimmed + grey tint in extended hours */}
             <line x1={sx(i)} x2={sx(i)} y1={sy(d.high)} y2={sy(d.low)}
-              stroke={color} strokeWidth={0.8} opacity={ext?0.3:0.55}/>
-            {/* Candle body */}
+              stroke={ext?"#6B7099":color} strokeWidth={0.8} opacity={ext?0.4:0.65}/>
+            {/* Candle body — grey fill in extended hours */}
             <rect x={sx(i)-cw/2} y={bT} width={cw} height={Math.max(bB-bT,1)}
-              fill={color} fillOpacity={ext?0.08:d.isGreen?0.2:0.45}
-              stroke={color} strokeWidth={0.8} opacity={ext?0.4:1}/>
+              fill={ext?"#6B7099":color} fillOpacity={ext?0.15:d.isGreen?0.22:0.5}
+              stroke={ext?"#6B7099":color} strokeWidth={0.8} opacity={ext?0.55:1}/>
           </g>);
         })}
         {showEMA&&<>{eLine("ema9",T.ema9,"4,3")}{eLine("ema20",T.ema20,"")}{eLine("ema50",T.ema50,"")}</>}
@@ -1139,7 +1210,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
           if(d.type==='hline'){
             const y=sy(d.price);
             if(y<Pad.t||y>Pad.t+H)return null;
-            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)}
+            return(<g key={d.id} onPointerDown={e=>onDrawingMouseDown(e,d)}
               onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}}
               style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
               {/* Hit zone — wider invisible line for easier clicking */}
@@ -1155,7 +1226,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
             if(vi1<-20||vi2<-20||vi1>visData.length+20||vi2>visData.length+20)return null;
             const x1=Pad.l+(vi1+0.5)*(W/visData.length),y1=sy(d.p1.price);
             const x2=Pad.l+(vi2+0.5)*(W/visData.length),y2=sy(d.p2.price);
-            return(<g key={d.id} onMouseDown={e=>onDrawingMouseDown(e,d)}
+            return(<g key={d.id} onPointerDown={e=>onDrawingMouseDown(e,d)}
               onClick={e=>{e.stopPropagation();if(!draggingDraw)setSelDraw(isSel?null:d.id);}}
               style={{cursor:draggingDraw?.id===d.id?'grabbing':'grab'}}>
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={14}/>
@@ -1393,6 +1464,17 @@ function IndexChart({index,T}){
 
   const data=useMemo(()=>enrich(rawChart),[rawChart]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
+  // Pre-compute extended-hours bands (avoids IIFE-in-JSX Babel issue)
+  const extBands=useMemo(()=>{
+    if(!data.some(d=>d.isExtended))return[];
+    const bands=[];let s=null;
+    data.forEach((d,i)=>{
+      if(d.isExtended&&s===null)s=i;
+      else if(!d.isExtended&&s!==null){bands.push({s,e:i-1,pre:data[s]?._ts&&new Date(data[s]._ts*1000).getUTCHours()<9});s=null;}
+    });
+    if(s!==null)bands.push({s,e:data.length-1,pre:false});
+    return bands;
+  },[data]);
   const signals=useMemo(()=>ind.signals?detectSignals(data):[],[data,ind.signals]);
   const ch=pct(index.p,index.pc),isUp=ch>=0;
   const col=isUp?T.up:T.down;
@@ -1410,7 +1492,7 @@ function IndexChart({index,T}){
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
       <div>
         {chartMode==="candle"
-          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={index.s} tf={tf}/>
+          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={index.s} tf={tf} chartH={window.innerWidth<640?460:210}/>
           :<LineChartView data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={185} accent={col}/>
         }
       </div>
@@ -1871,16 +1953,15 @@ NEWS: ${newsText}`;
 ${ctx}
 Return ONLY valid JSON:
 {"movement":["b1","b2","b3"],"bulls":["b1","b2","b3"],"bears":["b1","b2","b3"],"oneLiner":"one sentence thesis"}`;
-      const res=await fetch("/api/claude",{
+      const res=await fetch("/api/analyze",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:700,messages:[{role:"user",content:prompt}]})
+        body:JSON.stringify({symbol,context:ctx})
       });
       if(!res.ok)throw new Error(`API error ${res.status}`);
       const raw=await res.json();
-      const txt=(raw.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("")||"";
-      const match=txt.match(/\{[\s\S]*\}/);
-      if(!match)throw new Error("No JSON in response");
-      const parsed=JSON.parse(match[0]);
+      if(raw.error)throw new Error(raw.error);
+      const txt=JSON.stringify(raw);
+      const parsed=raw.movement?raw:JSON.parse((txt.match(/\{[\s\S]*\}/)||["{}"])[0]);
       if(!parsed.movement?.length)throw new Error("Empty analysis");
       parsed.generatedAt=new Date().toISOString();
       setData(parsed);
@@ -1944,8 +2025,8 @@ function StockNews({symbol,T}){
     fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
       .then(r=>r.ok?r.json():[]).then(n=>setNews(n||[])).catch(()=>{}).finally(()=>setLoading(false));
   },[symbol]);
-  if(loading)return<div style={{padding:16,fontSize:11,color:T.textSub}}>Loading news…</div>;
-  if(!news.length)return<div style={{padding:16,fontSize:11,color:T.textSub}}>No recent news for {symbol}.</div>;
+  if(loading)return(<div style={{padding:16,fontSize:11,color:T.textSub}}>Loading news…</div>);
+  if(!news.length)return(<div style={{padding:16,fontSize:11,color:T.textSub}}>No recent news for {symbol}.</div>);
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden"}}>
       {news.map((n,i)=>(
@@ -2012,7 +2093,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
             <span style={{animation:"pulse 1.2s infinite",display:"inline-block"}}>⟳</span> Fetching real-time chart…
            </div>
           :chartData.length>0&&(chartMode==="candle"
-            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={tf}/>
+            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={tf} chartH={window.innerWidth<640?520:210}/>
             :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={195} accent={isUp?T.up:T.down}/>
           )
         }
@@ -2020,7 +2101,11 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
       {ind.volume&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>Volume</div><VolumePanel data={chartData} T={T}/></div>}
       {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
       {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T}/></div>);})()}
+      {/* ── AI Analysis ──────────────────────────────── */}
+      {/* ── Stock Insights ────────────────────────────── */}
       <YFInsights symbol={selected.s} price={selected.p} T={T}/>
+      {/* ── AI Analysis ───────────────────────────────── */}
+      <DeepAnalysis symbol={selected.s} T={T}/>
     </div>
   );
 }
@@ -2465,11 +2550,15 @@ export default function StockScreener(){
   },[]);// eslint-disable-line
 
   // Core refresh — fetches prices for ALL tabs at once
+  // Always-current tabs ref — lets runRefresh read latest without stale closure
+  const tabsRef=useRef(tabs);
+  useEffect(()=>{tabsRef.current=tabs;},[tabs]);
+
   const runRefresh=useCallback(async(stockList)=>{
     setRefreshing(true);
 
-    // Collect symbols from EVERY tab + indices (not just current tab)
-    const allTabSyms=[...new Set(tabs.flatMap(t=>t.stocks.map(s=>s.s)))];
+    // Use tabsRef.current so newly added tickers are always included
+    const allTabSyms=[...new Set(tabsRef.current.flatMap(t=>t.stocks.map(s=>s.s)))];
     const allSyms=[...new Set([...allTabSyms,...INDICES.map(i=>i.s)])];
 
     // ── Step 1: Finnhub via /api/quotes ─────────────────────────────────
@@ -2515,7 +2604,7 @@ export default function StockScreener(){
     setLastRefresh(new Date());
     setRefreshKey(k=>k+1);
     setRefreshing(false);
-  },[activeTab]);
+  },[activeTab]); // tabs accessed via tabsRef — always current, no dep needed
 
   // Keep selected index chart in sync when prices refresh
   useEffect(()=>{
@@ -2529,7 +2618,6 @@ export default function StockScreener(){
   const addTickerBySymbol=useCallback(async(sym)=>{
     sym=sym.trim().toUpperCase();
     if(!sym)return;
-    // Prevent duplicates — check against live tab state via functional update
     let alreadyExists=false;
     setTabs(prev=>{
       const cur=prev.find(t=>t.id===activeTab);
@@ -2538,42 +2626,19 @@ export default function StockScreener(){
     });
     if(alreadyExists)return;
 
-    // 1. Try Yahoo Finance (fast, real-time)
+    // Fetch price for the new symbol immediately
     const yfResult=await fetchYFQuotes([sym]);
     if(yfResult[sym]?.p>0){
       const{p,pc,name}=yfResult[sym];
       if(name&&name!==sym)setNames(n=>({...n,[sym]:name}));
       setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p,pc:pc||p,loading:false}:s)}:t));
-      return;
+    }else{
+      // Price fetch failed — mark loaded (0 price), runRefresh will pick it up
+      setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false}:s)}:t));
+      // Trigger a full refresh so new ticker gets prices with everything else
+      setTimeout(()=>runRefresh(),500);
     }
-
-    // 2. Claude web search fallback
-    const today=new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
-    try{
-      const res=await fetch("/api/claude",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-6",max_tokens:300,
-          tools:[{type:"web_search_20250305",name:"web_search"}],
-          messages:[{role:"user",content:`Today is ${today}. Search for the current price of stock ${sym}. Reply ONLY with JSON (replace zeros with real values):\n{"symbol":"${sym}","name":"Company Name","p":0,"pc":0}\np=current price, pc=previous close.`}]
-        })
-      });
-      const data=await res.json();
-      const txt=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
-      const parsed=parseJSON(txt);
-      let price=Number(parsed?.p||parsed?.price||0);
-      let prevClose=Number(parsed?.pc||parsed?.prevClose||0)||price*0.99;
-      if(!price){const m=txt.match(/\$?([\d]{1,6}(?:\.\d{1,2})?)/);if(m)price=parseFloat(m[1]);}
-      if(price>0){
-        if(parsed?.name&&parsed.name!==sym)setNames(n=>({...n,[sym]:parsed.name}));
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{s:sym,p:price,pc:prevClose,loading:false}:s)}:t));
-      }else{
-        setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
-      }
-    }catch{
-      setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.map(s=>s.s===sym?{...s,loading:false,failed:true}:s)}:t));
-    }
-  },[activeTab]);
+  },[activeTab,runRefresh]);
 
   const addTicker=()=>{if(newTicker.trim()){addTickerBySymbol(newTicker);setNewTicker("");}}
 
@@ -2593,8 +2658,8 @@ export default function StockScreener(){
       {showFilters&&(
         <div style={{display:"flex",gap:6,padding:"10px 12px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginRight:4}}>Filter by change</span>
-          {[["▲>2%",2],["▲>5%",5],["▲>10%",10]].map(([lbl,v])=>{const on=filters.changeMin===v;return<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMin:v,changeMax:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.up:T.border}`,background:on?`${T.up}18`:"transparent",color:on?T.up:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>;})}
-          {[["▼>2%",-2],["▼>5%",-5],["▼>10%",-10]].map(([lbl,v])=>{const on=filters.changeMax===v;return<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMax:v,changeMin:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.down:T.border}`,background:on?`${T.down}18`:"transparent",color:on?T.down:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>;})}
+          {[["▲>2%",2],["▲>5%",5],["▲>10%",10]].map(([lbl,v])=>{const on=filters.changeMin===v;return(<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMin:v,changeMax:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.up:T.border}`,background:on?`${T.up}18`:"transparent",color:on?T.up:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>);})}
+          {[["▼>2%",-2],["▼>5%",-5],["▼>10%",-10]].map(([lbl,v])=>{const on=filters.changeMax===v;return(<button key={lbl} onClick={()=>setFilters(p=>on?{changeMin:null,changeMax:null}:{changeMax:v,changeMin:null})} style={{padding:"3px 8px",borderRadius:20,border:`1px solid ${on?T.down:T.border}`,background:on?`${T.down}18`:"transparent",color:on?T.down:T.textSub,fontSize:10,cursor:"pointer",fontWeight:on?700:400}}>{lbl}</button>);})}
           <button onClick={()=>setFilters({changeMin:null,changeMax:null})} style={{marginLeft:"auto",fontSize:10,color:T.textSub,background:"none",border:"none",cursor:"pointer"}}><I.X s={9}/> Clear</button>
           <span style={{fontSize:10,color:T.textSub}}>{stocks.length}/{allStocks.length} shown</span>
         </div>
@@ -2648,7 +2713,7 @@ export default function StockScreener(){
             {autoRefresh?"⏱ Auto ON":"⏱ Auto"}
           </button>
           <button onClick={()=>setShowAlertList(true)} title="View Alerts" style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:14,cursor:"pointer"}}><I.Bell s={13}/></button>
-          <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${showFilters?T.accent:T.border}`,background:showFilters?`${T.accent}15`:T.surface,color:showFilters?T.accent:T.textSub,fontSize:11,cursor:"pointer",fontWeight:showFilters?700:400}} style={{display:"flex",alignItems:"center",gap:5}}><I.Filter s={11}/>Filter{filters.changeMin||filters.changeMax?" ✓":""}</button>
+          <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${showFilters?T.accent:T.border}`,background:showFilters?`${T.accent}15`:T.surface,color:showFilters?T.accent:T.textSub,fontSize:11,cursor:"pointer",fontWeight:showFilters?700:400,display:"flex",alignItems:"center",gap:5}}><I.Filter s={11}/>Filter{filters.changeMin||filters.changeMax?" ✓":""}</button>
           <button onClick={()=>runRefresh(curTab.stocks)} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
             <span style={refreshing?{animation:"pulse 1s infinite",display:"inline-block"}:{}}>{refreshing?"↻ Refreshing…":"↻ Refresh"}</span>
           </button>
