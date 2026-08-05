@@ -101,7 +101,7 @@ function AlertModal({symbol,currentPrice,T,onClose}){
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:24,width:300,boxShadow:"0 16px 40px rgba(0,0,0,0.5)"}}>
-        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}} style={{display:"flex",alignItems:"center",gap:7}}><I.Bell s={14} c={T.accent}/> Price Alert — {symbol}</div>
+        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4,display:"flex",alignItems:"center",gap:7}}><I.Bell s={14} c={T.accent}/> Price Alert — {symbol}</div>
         <div style={{fontSize:12,color:T.textSub,marginBottom:16,fontFamily:T.sans}}>Current ${currentPrice?.toFixed(2)||"—"}</div>
         <select value={cond} onChange={e=>setCond(e.target.value)} style={{width:"100%",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:13,marginBottom:10,outline:"none"}}>
           <option value="above">Notify when price rises ABOVE</option>
@@ -235,6 +235,94 @@ function buildWatchlistItems(stocks,events,T){
       title:e.event,detail:`${e.impact==="high"?"High impact":"Market event"} · ${e.date}`,time:e.date,priority:25});
   });
   return items.sort((a,b)=>b.priority-a.priority);
+}
+
+/* ════════════════════════════════════════════════════
+   DAILY MARKET BRIEF — AI-generated daily dashboard summary
+════════════════════════════════════════════════════ */
+function DailyBrief({indices,stocks,news,T}){
+  const KEY=`daily_brief_${new Date().toDateString()}`;
+  const [brief,setBrief]=useState(()=>{try{const c=localStorage.getItem(KEY);return c?JSON.parse(c):null;}catch{return null;}});
+  const [loading,setLoading]=useState(false);
+  const [open,setOpen]=useState(true);
+  const hasPrices=stocks.some(s=>s.p>0);
+
+  const generate=async()=>{
+    setLoading(true);
+    try{
+      const idx=indices.filter(i=>i.p>0).map(i=>{const ch=pct(i.p,i.pc);return `${i.name} ${ch>=0?"+":""}${ch.toFixed(2)}%`;}).join(", ");
+      const movers=[...stocks].filter(s=>s.p>0).map(s=>({s:s.s,ch:pct(s.p,s.pc)})).sort((a,b)=>Math.abs(b.ch)-Math.abs(a.ch)).slice(0,5);
+      const topNews=(news||[]).slice(0,3).map(n=>n.h||n.title||"").filter(Boolean).join("; ");
+      const ctx=`DATE: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
+MARKET INDICES: ${idx||"Loading"}
+WATCHLIST TOP MOVERS: ${movers.map(m=>`${m.s} ${m.ch>=0?"+":""}${m.ch.toFixed(2)}%`).join(", ")||"Loading"}
+HEADLINES: ${topNews||"No news loaded yet"}
+---
+Write 3 concise bullets covering: (1) overall market direction with specific %, (2) standout watchlist mover with context, (3) one thing to watch today. Each bullet max 20 words, cite a specific number.`;
+      const r=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({symbol:"Daily Market",context:ctx})});
+      if(!r.ok)return;
+      const d=await r.json();
+      const briefData={bullets:d.movement||[],headline:d.oneLiner||"",ts:Date.now()};
+      setBrief(briefData);
+      try{localStorage.setItem(KEY,JSON.stringify(briefData));}catch{}
+    }catch{}
+    setLoading(false);
+  };
+
+  // Auto-generate when prices arrive if no cache
+  useEffect(()=>{if(hasPrices&&!brief&&!loading)generate();},[hasPrices]);// eslint-disable-line
+
+  if(!open)return(
+    <div onClick={()=>setOpen(true)} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <span style={{fontSize:11,fontWeight:600,color:T.text,display:"flex",alignItems:"center",gap:6}}>
+        <span style={{fontSize:13}}>✦</span> Daily Market Brief
+        {brief&&<span style={{fontSize:9,color:T.textSub,fontWeight:400,marginLeft:4}}>{new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+      </span>
+      <span style={{fontSize:10,color:T.textSub}}>▼ expand</span>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:10,boxShadow:T.shadow}}>
+      {/* Header */}
+      <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,#6366F112,#7C6FF708)`}}>
+        <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
+          <span style={{color:T.accent}}>✦</span> Daily Market Brief
+          <span style={{fontSize:9,color:T.textSub,fontWeight:400}}>
+            {brief?.ts?`· ${new Date(brief.ts).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`:""}
+          </span>
+        </span>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          {brief&&<button onClick={()=>{setBrief(null);try{localStorage.removeItem(KEY);}catch{}generate();}} style={{fontSize:9,color:T.accent,background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>↻ Refresh</button>}
+          <button onClick={()=>setOpen(false)} style={{fontSize:9,color:T.textSub,background:"none",border:"none",cursor:"pointer"}}>▲ hide</button>
+        </div>
+      </div>
+      {/* Content */}
+      <div style={{padding:"12px 14px"}}>
+        {loading&&!brief&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,color:T.textSub,fontSize:11}}>
+            <span style={{animation:"pulse 1.2s infinite",fontSize:14}}>✦</span>
+            Generating today's market brief…
+          </div>
+        )}
+        {!loading&&!brief&&!hasPrices&&(
+          <div style={{fontSize:11,color:T.textSub}}>Waiting for price data to load…</div>
+        )}
+        {brief?.headline&&(
+          <div style={{fontSize:13,color:T.text,fontWeight:500,lineHeight:1.55,marginBottom:brief.bullets?.length?10:0,borderLeft:`3px solid ${T.accent}`,paddingLeft:10}}>
+            {brief.headline}
+          </div>
+        )}
+        {(brief?.bullets||[]).map((b,i)=>(
+          <div key={i} style={{display:"flex",gap:8,padding:"5px 0",borderBottom:i<(brief.bullets.length-1)?`1px solid ${T.border}`:"none"}}>
+            <span style={{color:T.accent,fontWeight:700,fontSize:11,flexShrink:0,paddingTop:1}}>{"①②③"[i]||"•"}</span>
+            <span style={{fontSize:11,color:T.textSub,lineHeight:1.5}}>{b}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /* ════════════════════════════════════════════════════
@@ -1196,9 +1284,9 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
               stroke={ext?"#6B7099":color} strokeWidth={0.8} opacity={ext?0.55:1}/>
           </g>);
         })}
-        {showEMA&&<>{eLine("ema9",T.ema9,"4,3")}{eLine("ema20",T.ema20,"")}{eLine("ema50",T.ema50,"")}</>}
+        {showEMA&&[...eLine("ema9",T.ema9,"4,3"),...eLine("ema20",T.ema20,""),...eLine("ema50",T.ema50,"")]}
         {showBB&&(()=>{const pts=(k)=>visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean);const up=pts("bbUpper"),lo=pts("bbLower");if(!up.length)return null;return(<g><path d={`M${up.join(" L")} L${lo.slice().reverse().join(" L")} Z`} fill="#A78BFA" fillOpacity={0.07}/>{[["bbUpper","#A78BFA","3,2"],["bbMiddle","#A78BFA50",""],["bbLower","#A78BFA","3,2"]].map(([k,c,dash])=>(<polyline key={k} points={visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean).join(" ")} fill="none" stroke={c} strokeWidth={1} strokeDasharray={dash} opacity={0.9}/>))}</g>);})()}
-        {showVWAP&&<>{eLine("vwap","#60A5FA","",1.5)}</>}
+        {showVWAP&&eLine("vwap","#60A5FA","",1.5)}
         {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
         {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
         {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
@@ -1328,10 +1416,12 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
           {showBB&&<><Line type="monotone" dataKey="bbUpper" stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Upper" connectNulls={false} opacity={0.85}/><Line type="monotone" dataKey="bbMiddle" stroke="#A78BFA" dot={false} strokeWidth={1} name="BB Mid" connectNulls={false} opacity={0.45}/><Line type="monotone" dataKey="bbLower" stroke="#A78BFA" dot={false} strokeWidth={1} strokeDasharray="3 2" name="BB Lower" connectNulls={false} opacity={0.85}/></>}
           {showVWAP&&<Line type="monotone" dataKey="vwap" stroke="#60A5FA" dot={false} strokeWidth={1.8} name="VWAP" connectNulls={false}/>}
           {showSupport&&srLevels&&srLevels.map((z,i)=>(<ReferenceLine key={i} y={z.price} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5 3" strokeWidth={1} opacity={0.45}/>))}
-          {showSignals&&sigChartData&&sigChartData.hasSigs&&<>
+          {showSignals&&sigChartData&&sigChartData.hasSigs&&(
             <Line data={sigChartData.d} dataKey="_buy"  stroke="none" dot={SigBuyDot}  activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/>
+          )}
+          {showSignals&&sigChartData&&sigChartData.hasSigs&&(
             <Line data={sigChartData.d} dataKey="_sell" stroke="none" dot={SigSellDot} activeDot={false} isAnimationActive={false} connectNulls={false} legendType="none"/>
-          </>}
+          )}
           <Brush dataKey="date" height={18} stroke={T.border} fill={T.surfaceB||T.surface} travellerWidth={8} startIndex={brushS} endIndex={brushE} onChange={({startIndex,endIndex})=>{if(startIndex!=null)setBrushS(startIndex);if(endIndex!=null)setBrushE(endIndex);}} tickFormatter={()=>""}/>
         </ComposedChart>
       </ResponsiveContainer>
@@ -1391,6 +1481,18 @@ function VolumePanel({data,T}){
    CHART CONTROLS
 ════════════════════════════════════════════════════ */
 function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
+  const [activeHelp,setActiveHelp]=useState(null);
+  const helpDefs={
+    "EMA":{title:"EMA — Exponential Moving Average",body:"Smoothed trend lines. When price crosses EMA9 above EMA20 = bullish momentum. When it drops below = bearish."},
+    "Vol":{title:"Volume",body:"How many shares traded. Rising price + rising volume = strong trend. Rising price + falling volume = suspect move."},
+    "MACD":{title:"MACD — Convergence/Divergence",body:"Measures trend and momentum. MACD line crossing above signal = potential buy. Below = potential sell."},
+    "S/R":{title:"Support & Resistance",body:"Support = price floor where buyers step in. Resistance = ceiling where sellers appear. Breaks on high volume signal strong directional moves."},
+    "VWAP":{title:"VWAP — Volume Weighted Avg Price",body:"The day's fair value by volume. Institutions use this as a bias filter. Price above VWAP = bullish. Below = bearish. Acts as intraday support/resistance."},
+    "BB":{title:"Bollinger Bands",body:"Volatility envelope. When bands narrow (squeeze) a big move is coming. Candles touching the outer band often reverse or continue in a strong trend."},
+    "RSI":{title:"RSI — Relative Strength (0–100)",body:"Momentum gauge. Above 70 = overbought, may pull back. Below 30 = oversold, may bounce. Watch 50 as the bull/bear divider."},
+    "Signals":{title:"Trade Signals",body:"Auto-detected crossovers from multiple indicators. Triangle up = bullish crossover. Triangle down = bearish. Use as one input — always check volume and context."},
+    "VP":{title:"Volume Profile",body:"Shows where most trading happened at each price. The amber POC line = highest-volume price — markets are drawn back to it like a magnet."},
+  };
   const chip=(active,color,label,onClick,disabled=false)=>(
     <button onClick={disabled?undefined:onClick} title={disabled?"Candle mode only":undefined} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${active?color:T.border}`,background:active&&!disabled?`${color}15`:"transparent",color:active&&!disabled?color:T.textSub,fontSize:10,cursor:disabled?"not-allowed":"pointer",fontWeight:active&&!disabled?600:400,transition:"all 0.12s",whiteSpace:"nowrap",fontFamily:T.sans,opacity:disabled?0.35:1}}>
       {label}
@@ -1399,6 +1501,7 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
   const intraday=Object.entries(TIMEFRAMES).filter(([,v])=>v.group==="Intraday");
   const history =Object.entries(TIMEFRAMES).filter(([,v])=>v.group==="History");
   return(
+    <div>
     <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
       {/* Intraday group */}
       <div style={{display:"flex",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:7,overflow:"hidden"}}>
@@ -1418,16 +1521,19 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       {chip(chartMode==="candle",T.accent,"Candle",()=>setChartMode("candle"))}
       <div style={{width:1,height:14,background:T.border}}/>
       {/* Indicators */}
-      {chip(ind.ema,    T.ema9,  "EMA",()=>toggleInd("ema"))}
-      {chip(ind.volume, T.accent,"Vol",()=>toggleInd("volume"))}
-      {chip(ind.macd,   T.accent,"MACD",()=>toggleInd("macd"))}
-      {chip(ind.support,T.up,   "S/R",()=>toggleInd("support"))}
+      {[["ema",ind.ema,T.ema9,"EMA"],["volume",ind.volume,T.accent,"Vol"],["macd",ind.macd,T.accent,"MACD"],["support",ind.support,T.up,"S/R"]].map(([k,active,color,label])=>(
+        <div key={k} style={{display:"flex",alignItems:"center",gap:1}}>
+          {chip(active,color,label,()=>toggleInd(k))}
+          <button onClick={()=>setActiveHelp(prev=>prev===label?null:label)} style={{width:13,height:13,borderRadius:"50%",background:activeHelp===label?T.accent:T.border,color:activeHelp===label?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0}}>?</button>
+        </div>
+      ))}
       <div style={{width:1,height:14,background:T.border}}/>
-      {chip(ind.vwap,      "#60A5FA","VWAP",     ()=>toggleInd("vwap"))}
-      {chip(ind.bb,        "#A78BFA","BB",        ()=>toggleInd("bb"))}
-      {chip(ind.rsi,       T.ema9,  "RSI",       ()=>toggleInd("rsi"))}
-      {chip(ind.signals,   "#F43F5E","Signals",   ()=>toggleInd("signals"))}
-      {chip(ind.volProfile,"#F59E0B","VP",        ()=>toggleInd("volProfile"),chartMode!=="candle")}
+      {[["vwap",ind.vwap,"#60A5FA","VWAP"],["bb",ind.bb,"#A78BFA","BB"],["rsi",ind.rsi,T.ema9,"RSI"],["signals",ind.signals,"#F43F5E","Signals"],["volProfile",ind.volProfile,"#F59E0B","VP"]].map(([k,active,color,label])=>(
+        <div key={k} style={{display:"flex",alignItems:"center",gap:1}}>
+          {chip(active,color,label,()=>toggleInd(k),k==="volProfile"&&chartMode!=="candle")}
+          <button onClick={()=>setActiveHelp(prev=>prev===label?null:label)} style={{width:13,height:13,borderRadius:"50%",background:activeHelp===label?T.accent:T.border,color:activeHelp===label?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0}}>?</button>
+        </div>
+      ))}
       {TIMEFRAMES[tf]?.group==="Intraday"&&(
         <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:8,
           background:"#6366F118",color:"#818CF8",border:"1px solid #6366F130",
@@ -1435,6 +1541,14 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
           Pre+Post
         </span>
       )}
+    </div>
+    {activeHelp&&activeHelp!=="__none"&&helpDefs[activeHelp]&&(
+      <div style={{background:T.surfaceB,border:`1px solid ${T.accent}40`,borderRadius:10,padding:"10px 14px",marginTop:4,position:"relative",animation:"fadeUp 0.12s ease"}}>
+        <button onClick={()=>setActiveHelp(null)} style={{position:"absolute",top:6,right:8,background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
+        <div style={{fontSize:11,fontWeight:700,color:T.accent,marginBottom:4}}>{helpDefs[activeHelp].title}</div>
+        <div style={{fontSize:11,color:T.textSub,lineHeight:1.6}}>{helpDefs[activeHelp].body}</div>
+      </div>
+    )}
     </div>
   );
 }
@@ -1729,6 +1843,16 @@ const REC_CONFIG={
 };
 
 function YFInsights({symbol,price,T}){
+  const [metricHelp,setMetricHelp]=useState(null); // which metric's help is showing
+  // Definitions for key metrics shown in analyst panel
+  const METRIC_HELP={
+    pe:    {label:"Fwd P/E",tip:"Price-to-Earnings ratio — how much investors pay per $1 of earnings. Lower = potentially cheaper vs peers. Tech stocks often trade at high P/E due to growth expectations."},
+    beta:  {label:"Beta",tip:"Market sensitivity. Beta 1.5 = 50% more volatile than S&P 500. Beta 0.5 = half as volatile. High beta = bigger swings both up and down."},
+    w52:   {label:"52W Range",tip:"The stock's price range over the past 52 weeks. Trading near the high = strong momentum. Near the low = potential value OR continued weakness. Context matters."},
+    target:{label:"Price Target",tip:"Where analysts think the stock will trade in 12 months. The average of all analyst targets. Upside % = how much higher vs current price if analysts are right."},
+    cons:  {label:"Consensus",tip:"The overall analyst recommendation. Strong Buy means most analysts expect significant outperformance. Always check HOW MANY analysts — 2 analysts vs 20 are very different signals."},
+    upside:{label:"Upside",tip:"% gain to reach the average analyst price target from current price. Positive = room to grow per analysts. Remember: analysts can be wrong and may have conflicts of interest."},
+  };
   const [analyst,  setAnalyst] =useState(null);
   const [news,     setNews]    =useState([]);
   const [actions,  setActions] =useState([]);  // named analyst upgrades/downgrades
@@ -1783,7 +1907,7 @@ function YFInsights({symbol,price,T}){
       {cfg&&(
         <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.insightBorder}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
-            <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:3}}>Analyst Consensus · {analysts||"—"} analysts</div>
+            <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:3}}>Analyst Consensus · {analysts||"—"} analysts <button onClick={()=>setMetricHelp(v=>v==="cons"?null:"cons")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="cons"?"#6366F1":T.border,color:metricHelp==="cons"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
             <span style={{padding:"3px 12px",borderRadius:7,background:`${cfg.color}22`,color:cfg.color,fontSize:13,fontWeight:700,fontFamily:T.sans}}>{cfg.label}</span>
           </div>
           {upside!==null&&(
@@ -1799,7 +1923,7 @@ function YFInsights({symbol,price,T}){
       {/* Price target range bar */}
       {targetLow&&targetHigh&&price&&(
         <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
-          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:6}}>12-Month Price Target Range</div>
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:6}}>12-Month Price Target Range<button onClick={()=>setMetricHelp(v=>v==="target"?null:"target")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="target"?"#6366F1":T.border,color:metricHelp==="target"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontFamily:T.mono,fontSize:10,color:T.down,minWidth:44}}>${targetLow.toFixed(0)}</span>
             <div style={{flex:1,position:"relative",height:6,background:T.border,borderRadius:3}}>
@@ -1894,6 +2018,15 @@ function YFInsights({symbol,price,T}){
         </div>
       )}
 
+      {/* Metric help cards */}
+      {metricHelp&&METRIC_HELP[metricHelp]&&(
+        <div style={{padding:"8px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
+          <div style={{padding:"8px 10px",background:T.surfaceB,borderRadius:8,border:"1px solid #6366F130"}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#6366F1",marginBottom:3}}>{METRIC_HELP[metricHelp].label}</div>
+            <div style={{fontSize:10,color:T.textSub,lineHeight:1.6}}>{METRIC_HELP[metricHelp].tip}</div>
+          </div>
+        </div>
+      )}
       {/* Latest news */}
       {news.length>0&&(
         <div style={{padding:"10px 16px"}}>
@@ -2226,11 +2359,11 @@ function YahooRecommendations({stocks,T,refreshKey}){
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.pe.toFixed(1)}x</div>
                         </div>}
                         {r.beta&&<div style={{flex:1,minWidth:60,padding:"0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>Beta</div>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>Beta<button onClick={()=>setMetricHelp(v=>v==="beta"?null:"beta")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="beta"?"#6366F1":T.border,color:metricHelp==="beta"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.beta.toFixed(2)}</div>
                         </div>}
                         {r.w52h&&<div style={{flex:2,minWidth:100,padding:"0 0 0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>52W Range</div>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>52W Range<button onClick={()=>setMetricHelp(v=>v==="w52"?null:"w52")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="w52"?"#6366F1":T.border,color:metricHelp==="w52"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
                           <div style={{fontSize:11,fontWeight:600,fontFamily:T.mono}}><span style={{color:T.down}}>${r.w52l<100?r.w52l?.toFixed(1):Math.round(r.w52l)}</span><span style={{color:T.textSub}}> – </span><span style={{color:T.up}}>${r.w52h<100?r.w52h?.toFixed(1):Math.round(r.w52h)}</span></div>
                         </div>}
                       </div>
@@ -2285,7 +2418,7 @@ function Recommendations({stocks,T,refreshKey}){
       <div onClick={()=>setOpen(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",cursor:"pointer",borderBottom:open?`1px solid ${T.border}`:"none"}}>
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,display:"flex",alignItems:"center",gap:6}}><I.BarChart s={13} c={T.textSub}/>Analyst Consensus</div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          {!loading&&<button onClick={e=>{e.stopPropagation();refresh();}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,fontFamily:T.sans}} style={{display:"flex",alignItems:"center",gap:5}}><I.Refresh s={12}/>Refresh</button>}
+          {!loading&&<button onClick={e=>{e.stopPropagation();refresh();}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,fontFamily:T.sans,display:"flex",alignItems:"center",gap:5}}><I.Refresh s={12}/>Refresh</button>}
           {loading&&<span style={{fontSize:10,color:T.textSub,animation:"pulse 1.2s infinite",fontFamily:T.sans}}>Loading…</span>}
           <span style={{color:T.textSub,fontSize:12}}>{open?<I.ChevronUp s={11}/>:<I.ChevronDown s={11}/>}</span>
         </div>
@@ -2731,6 +2864,8 @@ export default function StockScreener(){
       <MarketBar indices={indices} selectedIdx={selectedIdx} onSelectIdx={setSelectedIdx} T={T}/>
       {selectedIdx&&<IndexChart key={selectedIdx.s} index={selectedIdx} T={T}/>}
 
+      {/* ── DAILY BRIEF ───────────────────────────────── */}
+      <DailyBrief indices={indices} stocks={allStocks} news={mktNews} T={T}/>
       {/* ── INTELLIGENCE FEED ─────────────────────── */}
       <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
 
