@@ -244,39 +244,49 @@ function DailyBrief({indices,stocks,news,T}){
   const KEY=`daily_brief_${new Date().toDateString()}`;
   const [brief,setBrief]=useState(()=>{try{const c=localStorage.getItem(KEY);return c?JSON.parse(c):null;}catch{return null;}});
   const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
   const [open,setOpen]=useState(true);
-  const hasPrices=stocks.some(s=>s.p>0);
 
   const generate=async()=>{
-    setLoading(true);
+    setLoading(true);setError(null);
     try{
       const idx=indices.filter(i=>i.p>0).map(i=>{const ch=pct(i.p,i.pc);return `${i.name} ${ch>=0?"+":""}${ch.toFixed(2)}%`;}).join(", ");
       const movers=[...stocks].filter(s=>s.p>0).map(s=>({s:s.s,ch:pct(s.p,s.pc)})).sort((a,b)=>Math.abs(b.ch)-Math.abs(a.ch)).slice(0,5);
       const topNews=(news||[]).slice(0,3).map(n=>n.h||n.title||"").filter(Boolean).join("; ");
       const ctx=`DATE: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
-MARKET INDICES: ${idx||"Loading"}
-WATCHLIST TOP MOVERS: ${movers.map(m=>`${m.s} ${m.ch>=0?"+":""}${m.ch.toFixed(2)}%`).join(", ")||"Loading"}
-HEADLINES: ${topNews||"No news loaded yet"}
+MARKET INDICES: ${idx||"No data"}
+WATCHLIST TOP MOVERS: ${movers.map(m=>`${m.s} ${m.ch>=0?"+":""}${m.ch.toFixed(2)}%`).join(", ")||"No data"}
+HEADLINES: ${topNews||"No headlines"}
 ---
-Write 3 concise bullets covering: (1) overall market direction with specific %, (2) standout watchlist mover with context, (3) one thing to watch today. Each bullet max 20 words, cite a specific number.`;
+Write 3 concise bullets: (1) overall market direction with specific %, (2) standout mover with context, (3) one thing to watch today. Max 20 words each, cite numbers.`;
       const r=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({symbol:"Daily Market",context:ctx})});
-      if(!r.ok)return;
+      // Guard against HTML error pages before calling .json()
+      const rct=r.headers.get("content-type")||"";
+      if(!rct.includes("application/json")){
+        if(r.status===404)throw new Error("api/analyze.js not found — commit it to your GitHub repo and redeploy");
+        throw new Error(`Server returned ${r.status} (non-JSON). Check Vercel deployment.`);
+      }
+      if(!r.ok){
+        const ed=await r.json().catch(()=>({}));
+        const msg=ed.error||`API error ${r.status}`;
+        setError(msg.toLowerCase().includes("credit")||msg.toLowerCase().includes("billing")
+          ?"Anthropic API credits required. Add credits at console.anthropic.com/billing"
+          :msg);
+        return;
+      }
       const d=await r.json();
       const briefData={bullets:d.movement||[],headline:d.oneLiner||"",ts:Date.now()};
       setBrief(briefData);
       try{localStorage.setItem(KEY,JSON.stringify(briefData));}catch{}
-    }catch{}
-    setLoading(false);
+    }catch(e){setError(e.message||"Generation failed");}
+    finally{setLoading(false);}
   };
-
-  // Auto-generate when prices arrive if no cache
-  useEffect(()=>{if(hasPrices&&!brief&&!loading)generate();},[hasPrices]);// eslint-disable-line
 
   if(!open)return(
     <div onClick={()=>setOpen(true)} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontSize:11,fontWeight:600,color:T.text,display:"flex",alignItems:"center",gap:6}}>
-        <span style={{fontSize:13}}>✦</span> Daily Market Brief
+        <span style={{color:T.accent}}>✦</span> Daily Market Brief
         {brief&&<span style={{fontSize:9,color:T.textSub,fontWeight:400,marginLeft:4}}>{new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
       </span>
       <span style={{fontSize:10,color:T.textSub}}>▼ expand</span>
@@ -285,41 +295,44 @@ Write 3 concise bullets covering: (1) overall market direction with specific %, 
 
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:10,boxShadow:T.shadow}}>
-      {/* Header */}
       <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,#6366F112,#7C6FF708)`}}>
         <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
           <span style={{color:T.accent}}>✦</span> Daily Market Brief
           <span style={{fontSize:9,color:T.textSub,fontWeight:400}}>
-            {brief?.ts?`· ${new Date(brief.ts).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`:""}
+            {brief?.ts?`· ${new Date(brief.ts).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`:"· AI-powered"}
           </span>
         </span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          {brief&&<button onClick={()=>{setBrief(null);try{localStorage.removeItem(KEY);}catch{}generate();}} style={{fontSize:9,color:T.accent,background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>↻ Refresh</button>}
+          {brief&&!loading&&<button onClick={()=>{setBrief(null);setError(null);try{localStorage.removeItem(KEY);}catch{}}} style={{fontSize:9,color:T.textSub,background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>↻</button>}
           <button onClick={()=>setOpen(false)} style={{fontSize:9,color:T.textSub,background:"none",border:"none",cursor:"pointer"}}>▲ hide</button>
         </div>
       </div>
-      {/* Content */}
       <div style={{padding:"12px 14px"}}>
-        {loading&&!brief&&(
-          <div style={{display:"flex",alignItems:"center",gap:8,color:T.textSub,fontSize:11}}>
-            <span style={{animation:"pulse 1.2s infinite",fontSize:14}}>✦</span>
-            Generating today's market brief…
+        {/* Error */}
+        {error&&<div style={{fontSize:11,color:T.down,marginBottom:10,padding:"8px 10px",background:`${T.down}10`,borderRadius:6,lineHeight:1.5}}>⚠ {error}</div>}
+        {/* Loading */}
+        {loading&&<div style={{display:"flex",alignItems:"center",gap:8,color:T.textSub,fontSize:11}}><span style={{animation:"pulse 1.2s infinite",fontSize:14}}>✦</span>Generating… (10–20s)</div>}
+        {/* Generate button — shown when no brief and not loading */}
+        {!brief&&!loading&&(
+          <div style={{textAlign:"center",padding:"4px 0 8px"}}>
+            <div style={{fontSize:11,color:T.textSub,marginBottom:12,lineHeight:1.5}}>
+              AI-written summary of your watchlist and market conditions.<br/>
+              <span style={{fontSize:9}}>Requires Anthropic API credits · Cached until midnight</span>
+            </div>
+            <button onClick={generate} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",background:`linear-gradient(135deg,#6366F1,#7C6FF7)`,color:"#fff",fontSize:12,fontWeight:700,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
+              ✦ Generate Today's Brief
+            </button>
           </div>
         )}
-        {!loading&&!brief&&!hasPrices&&(
-          <div style={{fontSize:11,color:T.textSub}}>Waiting for price data to load…</div>
-        )}
-        {brief?.headline&&(
-          <div style={{fontSize:13,color:T.text,fontWeight:500,lineHeight:1.55,marginBottom:brief.bullets?.length?10:0,borderLeft:`3px solid ${T.accent}`,paddingLeft:10}}>
-            {brief.headline}
-          </div>
-        )}
+        {/* Brief content */}
+        {brief?.headline&&<div style={{fontSize:13,color:T.text,fontWeight:500,lineHeight:1.55,marginBottom:brief.bullets?.length?10:0,borderLeft:`3px solid ${T.accent}`,paddingLeft:10}}>{brief.headline}</div>}
         {(brief?.bullets||[]).map((b,i)=>(
           <div key={i} style={{display:"flex",gap:8,padding:"5px 0",borderBottom:i<(brief.bullets.length-1)?`1px solid ${T.border}`:"none"}}>
             <span style={{color:T.accent,fontWeight:700,fontSize:11,flexShrink:0,paddingTop:1}}>{"①②③"[i]||"•"}</span>
             <span style={{fontSize:11,color:T.textSub,lineHeight:1.5}}>{b}</span>
           </div>
         ))}
+        {brief&&<div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}><button onClick={()=>{setBrief(null);setError(null);try{localStorage.removeItem(KEY);}catch{}}} style={{fontSize:10,color:T.accent,background:"none",border:"none",cursor:"pointer"}}>Regenerate ↻</button></div>}
       </div>
     </div>
   );
@@ -2066,7 +2079,6 @@ function DeepAnalysis({symbol,T}){
   const generate=async()=>{
     setLoading(true);setError(null);
     try{
-      // Fetch context data client-side using existing functions
       const [analyst,news,earn]=await Promise.all([
         fetchBestAnalystData(symbol),
         fetchYFNews(symbol,5),
@@ -2090,11 +2102,18 @@ Return ONLY valid JSON:
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({symbol,context:ctx})
       });
+      // Guard against HTML error pages (404/500) before calling .json()
+      const ct=res.headers.get("content-type")||"";
+      if(!ct.includes("application/json")){
+        if(res.status===404)throw new Error("api/analyze.js not found on server — commit it to your GitHub repo and redeploy to Vercel");
+        const html=await res.text().catch(()=>"");
+        throw new Error(`Server returned ${res.status} (non-JSON). Check Vercel deployment logs.`);
+      }
       const raw=await res.json();
       if(!res.ok){
-        // Surface the actual Anthropic error for debugging
         const detail=raw.error||raw.anthropic_type||`HTTP ${res.status}`;
-        throw new Error(detail);
+        const creditErr=detail.toLowerCase().includes("credit")||detail.toLowerCase().includes("billing")||detail.toLowerCase().includes("low");
+        throw new Error(creditErr?"Anthropic API credits required — add credits at console.anthropic.com/billing":detail);
       }
       if(raw.error)throw new Error(raw.error);
       const txt=JSON.stringify(raw);
