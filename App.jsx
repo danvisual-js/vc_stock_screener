@@ -2112,8 +2112,12 @@ Return ONLY valid JSON:
       const raw=await res.json();
       if(!res.ok){
         const detail=raw.error||raw.anthropic_type||`HTTP ${res.status}`;
-        const creditErr=detail.toLowerCase().includes("credit")||detail.toLowerCase().includes("billing")||detail.toLowerCase().includes("low");
-        throw new Error(creditErr?"Anthropic API credits required — add credits at console.anthropic.com/billing":detail);
+        // Only show billing link for the specific Anthropic credit error type
+        const isCreditErr=raw.anthropic_type==="credit_balance_too_low"||
+          (typeof detail==="string"&&detail.toLowerCase().includes("credit balance"));
+        throw new Error(isCreditErr
+          ?"Anthropic API credits required — add credits at console.anthropic.com/billing"
+          :detail); // show actual error for anything else
       }
       if(raw.error)throw new Error(raw.error);
       const txt=JSON.stringify(raw);
