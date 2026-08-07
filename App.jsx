@@ -227,14 +227,26 @@ function buildWatchlistItems(stocks,events,T){
   });
   (events?.earnings||[]).slice(0,5).forEach(e=>{
     const parts=[e.epsEst!=null?`Est. EPS $${e.epsEst}`:null,e.revEst!=null?`Rev $${e.revEst}B`:null,e.when,e.beatRate!=null?`${e.beatRate}% beat rate`:null].filter(Boolean);
+    const dp=e.date?e.date.split(" "):[];
+    const dTs=dp.length>=2?new Date(`${dp[0]} ${dp[1]} ${new Date().getFullYear()}`).getTime():Date.now()+1e12;
     items.push({id:`earn-${e.s}`,color:"#F59E0B",icon:"📅",sym:e.s,
-      title:`${e.s} earnings · ${e.date}`,detail:parts.join(" · "),time:e.date,priority:55});
+      title:`${e.s} earnings · ${e.date}`,detail:parts.join(" · "),time:e.date,priority:55,dateTs:dTs});
   });
   (events?.macro||[]).slice(0,2).forEach(e=>{
     items.push({id:`mac-${e.event}`,color:"#A78BFA",icon:"◎",
       title:e.event,detail:`${e.impact==="high"?"High impact":"Market event"} · ${e.date}`,time:e.date,priority:25});
   });
-  return items.sort((a,b)=>b.priority-a.priority);
+  return items.sort((a,b)=>{
+    // Movers always top; earnings sorted by date ascending; macro last
+    if(a.id.startsWith("mv-")&&!b.id.startsWith("mv-"))return -1;
+    if(!a.id.startsWith("mv-")&&b.id.startsWith("mv-"))return 1;
+    if(a.id.startsWith("earn-")&&b.id.startsWith("earn-")){
+      return(a.dateTs||0)-(b.dateTs||0); // earliest first
+    }
+    if(a.id.startsWith("earn-")&&!b.id.startsWith("earn-"))return -1;
+    if(!a.id.startsWith("earn-")&&b.id.startsWith("earn-"))return 1;
+    return b.priority-a.priority;
+  });
 }
 
 /* ════════════════════════════════════════════════════
@@ -246,6 +258,7 @@ function DailyBrief({indices,stocks,news,T}){
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
   const [open,setOpen]=useState(true);
+  const hasPrices=stocks.some(s=>s.p>0);
 
   const generate=async()=>{
     setLoading(true);setError(null);
@@ -282,6 +295,11 @@ Write 3 concise bullets: (1) overall market direction with specific %, (2) stand
     }catch(e){setError(e.message||"Generation failed");}
     finally{setLoading(false);}
   };
+
+  // Auto-generate once per day — checks cache first so only fires once
+  useEffect(()=>{
+    if(!brief&&!loading)generate();
+  },[]);// eslint-disable-line
 
   if(!open)return(
     <div onClick={()=>setOpen(true)} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -459,19 +477,25 @@ const DARK = {
   headerGrad:"linear-gradient(180deg,#0E1028 0%,#08090E 100%)",
 };
 const LIGHT = {
-  bg:        "#F2F2F7",   surface:"#FFFFFF",  surfaceB:"#F8F9FA",
-  border:    "#E5E5EA",   accent:"#6355E8",
-  up:        "#00B386",   down:"#E74C3C",
-  text:      "#1C1C1E",   textSub:"#6C757D",  textTert:"#ADB5BD",
+  // Discord-inspired: layered grey backgrounds, no harsh white
+  bg:        "#F2F3F5",   // Discord server background (grey-100)
+  surface:   "#FFFFFF",   // card surface white for contrast against bg
+  surfaceB:  "#EBEDEF",   // Discord channel list / raised surface (grey-200)
+  border:    "#D4D7DC",   // Discord separator
+  accent:    "#5865F2",   // Discord blurple
+  up:        "#2D7D46",   down:"#DA3633",
+  text:      "#060607",   // Discord near-black
+  textSub:   "#4E5058",   // Discord muted / secondary
+  textTert:  "#B5BAC1",   // Discord deselected / placeholder
   mono:      "'SF Mono','Fira Code','Consolas',monospace",
   sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
   ema9:      "#D97706",   ema20:"#2563EB",  ema50:"#7C3AED",
-  chartGrid: "#F0F0F5",
-  insightBg:"#FFFFFF",insightBorder:"#E5E5EA",insightText:"#6355E8",
-  upBg:"#00B38618",downBg:"#E74C3C18",accentBg:"#6355E812",
-  shadow:    "0 1px 4px rgba(0,0,0,0.08)",
-  accentGlow:"0 0 0 1.5px #6355E860",
-  headerGrad:"linear-gradient(180deg,#F5F4FF 0%,#F2F2F7 100%)",
+  chartGrid: "#EBEDEF",
+  insightBg:"#FFFFFF",insightBorder:"#D4D7DC",insightText:"#5865F2",
+  upBg:"#2D7D4615",downBg:"#DA363315",accentBg:"#5865F215",
+  shadow:    "0 1px 3px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.06)",
+  accentGlow:"0 0 0 1.5px #5865F260",
+  headerGrad:"linear-gradient(180deg,#E9EAEC 0%,#F2F3F5 100%)",
 };
 
 /* ════════════════════════════════════════════════════
@@ -1491,20 +1515,47 @@ function VolumePanel({data,T}){
 }
 
 /* ════════════════════════════════════════════════════
+   TOOLTIP — hover-delayed on desktop, tap on mobile
+════════════════════════════════════════════════════ */
+function Tooltip({tip,children,T}){
+  const [show,setShow]=useState(false);
+  const timer=React.useRef(null);
+  const mob=typeof window!=="undefined"&&window.innerWidth<640;
+  const onEnter=()=>{if(mob)return;timer.current=setTimeout(()=>setShow(true),600);};
+  const onLeave=()=>{clearTimeout(timer.current);setShow(false);};
+  const onTap=e=>{if(!mob)return;e.stopPropagation();setShow(v=>!v);};
+  return(
+    <div style={{position:"relative",display:"inline-flex"}} onMouseEnter={onEnter} onMouseLeave={onLeave} onClick={onTap}>
+      {children}
+      {show&&(
+        <div style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",transform:"translateX(-50%)",
+          background:T.surface,border:`1px solid ${T.accent}35`,borderRadius:8,padding:"8px 10px",
+          fontSize:10,color:T.textSub,lineHeight:1.55,whiteSpace:"normal",width:190,zIndex:500,
+          boxShadow:"0 4px 20px rgba(0,0,0,0.45)",pointerEvents:"none",textAlign:"left",
+          animation:"fadeUp 0.1s ease"}}>
+          {tip}
+          {mob&&<div style={{fontSize:9,color:T.textSub,marginTop:4,borderTop:`1px solid ${T.border}`,paddingTop:4}}>Tap elsewhere to dismiss</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
    CHART CONTROLS
 ════════════════════════════════════════════════════ */
 function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
   const [activeHelp,setActiveHelp]=useState(null);
   const helpDefs={
-    "EMA":{title:"EMA — Exponential Moving Average",body:"Smoothed trend lines. When price crosses EMA9 above EMA20 = bullish momentum. When it drops below = bearish."},
-    "Vol":{title:"Volume",body:"How many shares traded. Rising price + rising volume = strong trend. Rising price + falling volume = suspect move."},
-    "MACD":{title:"MACD — Convergence/Divergence",body:"Measures trend and momentum. MACD line crossing above signal = potential buy. Below = potential sell."},
-    "S/R":{title:"Support & Resistance",body:"Support = price floor where buyers step in. Resistance = ceiling where sellers appear. Breaks on high volume signal strong directional moves."},
-    "VWAP":{title:"VWAP — Volume Weighted Avg Price",body:"The day's fair value by volume. Institutions use this as a bias filter. Price above VWAP = bullish. Below = bearish. Acts as intraday support/resistance."},
-    "BB":{title:"Bollinger Bands",body:"Volatility envelope. When bands narrow (squeeze) a big move is coming. Candles touching the outer band often reverse or continue in a strong trend."},
-    "RSI":{title:"RSI — Relative Strength (0–100)",body:"Momentum gauge. Above 70 = overbought, may pull back. Below 30 = oversold, may bounce. Watch 50 as the bull/bear divider."},
-    "Signals":{title:"Trade Signals",body:"Auto-detected crossovers from multiple indicators. Triangle up = bullish crossover. Triangle down = bearish. Use as one input — always check volume and context."},
-    "VP":{title:"Volume Profile",body:"Shows where most trading happened at each price. The amber POC line = highest-volume price — markets are drawn back to it like a magnet."},
+    "EMA":    {color:T.ema9, title:"EMA — Exponential Moving Average",body:"Smoothed trend lines. When price crosses EMA9 above EMA20 = bullish momentum. When it drops below = bearish."},
+    "Vol":    {color:T.accent,title:"Volume",body:"How many shares traded. Rising price + rising volume = strong trend. Rising price + falling volume = suspect move."},
+    "MACD":   {color:T.accent,title:"MACD — Convergence/Divergence",body:"Measures trend and momentum. MACD line crossing above signal = potential buy. Below = potential sell."},
+    "S/R":    {color:T.up,   title:"Support & Resistance",body:"Support = price floor where buyers step in. Resistance = ceiling where sellers appear. Breaks on high volume signal strong directional moves."},
+    "VWAP":   {color:"#60A5FA",title:"VWAP — Volume Weighted Avg Price",body:"The day's fair value by volume. Institutions use this as a bias filter. Price above VWAP = bullish. Below = bearish."},
+    "BB":     {color:"#A78BFA",title:"Bollinger Bands",body:"Volatility envelope. When bands narrow (squeeze) a big move is coming. Candles touching the outer band often reverse or continue in a strong trend."},
+    "RSI":    {color:T.ema9, title:"RSI — Relative Strength (0–100)",body:"Momentum gauge. Above 70 = overbought, may pull back. Below 30 = oversold, may bounce. Watch 50 as the bull/bear divider."},
+    "Signals":{color:"#F43F5E",title:"Trade Signals",body:"Auto-detected crossovers from multiple indicators. Triangle up = bullish crossover. Triangle down = bearish. Use as one input — check volume and context."},
+    "VP":     {color:"#F59E0B",title:"Volume Profile",body:"Shows where most trading happened at each price. The amber POC line = highest-volume price — markets are drawn back to it like a magnet."},
   };
   const chip=(active,color,label,onClick,disabled=false)=>(
     <button onClick={disabled?undefined:onClick} title={disabled?"Candle mode only":undefined} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${active?color:T.border}`,background:active&&!disabled?`${color}15`:"transparent",color:active&&!disabled?color:T.textSub,fontSize:10,cursor:disabled?"not-allowed":"pointer",fontWeight:active&&!disabled?600:400,transition:"all 0.12s",whiteSpace:"nowrap",fontFamily:T.sans,opacity:disabled?0.35:1}}>
@@ -1535,18 +1586,28 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       <div style={{width:1,height:14,background:T.border}}/>
       {/* Indicators */}
       {[["ema",ind.ema,T.ema9,"EMA"],["volume",ind.volume,T.accent,"Vol"],["macd",ind.macd,T.accent,"MACD"],["support",ind.support,T.up,"S/R"]].map(([k,active,color,label])=>(
-        <div key={k} style={{display:"flex",alignItems:"center",gap:1}}>
-          {chip(active,color,label,()=>toggleInd(k))}
-          <button onClick={()=>setActiveHelp(prev=>prev===label?null:label)} style={{width:13,height:13,borderRadius:"50%",background:activeHelp===label?T.accent:T.border,color:activeHelp===label?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0}}>?</button>
-        </div>
+        <button key={k} onClick={()=>toggleInd(k)}
+          title={helpDefs[label]?.body||""}
+          style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${ind[k]?helpDefs[label]?.color||T.accent:T.border}`,background:ind[k]?`${helpDefs[label]?.color||T.accent}15`:"transparent",color:ind[k]?helpDefs[label]?.color||T.accent:T.textSub,fontSize:10,cursor:"pointer",fontWeight:ind[k]?600:400,transition:"all 0.12s",whiteSpace:"nowrap",fontFamily:T.sans}}>
+          {label}
+        </button>
       ))}
       <div style={{width:1,height:14,background:T.border}}/>
-      {[["vwap",ind.vwap,"#60A5FA","VWAP"],["bb",ind.bb,"#A78BFA","BB"],["rsi",ind.rsi,T.ema9,"RSI"],["signals",ind.signals,"#F43F5E","Signals"],["volProfile",ind.volProfile,"#F59E0B","VP"]].map(([k,active,color,label])=>(
-        <div key={k} style={{display:"flex",alignItems:"center",gap:1}}>
-          {chip(active,color,label,()=>toggleInd(k),k==="volProfile"&&chartMode!=="candle")}
-          <button onClick={()=>setActiveHelp(prev=>prev===label?null:label)} style={{width:13,height:13,borderRadius:"50%",background:activeHelp===label?T.accent:T.border,color:activeHelp===label?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0}}>?</button>
-        </div>
-      ))}
+      {[["vwap",ind.vwap,"#60A5FA","VWAP"],["bb",ind.bb,"#A78BFA","BB"],["rsi",ind.rsi,T.ema9,"RSI"],["signals",ind.signals,"#F43F5E","Signals"],["volProfile",ind.volProfile,"#F59E0B","VP"]].map(([k,active,color,label])=>{
+        const dis=k==="volProfile"&&chartMode!=="candle";
+        return(
+          <button key={k} onClick={dis?undefined:()=>toggleInd(k)}
+            title={helpDefs[label]?.body||""}
+            style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${ind[k]&&!dis?helpDefs[label]?.color||T.accent:T.border}`,background:ind[k]&&!dis?`${helpDefs[label]?.color||T.accent}15`:"transparent",color:ind[k]&&!dis?helpDefs[label]?.color||T.accent:T.textSub,fontSize:10,cursor:dis?"not-allowed":"pointer",fontWeight:ind[k]&&!dis?600:400,transition:"all 0.12s",whiteSpace:"nowrap",fontFamily:T.sans,opacity:dis?0.35:1}}>
+            {label}
+          </button>
+        );
+      })}
+      {/* Mobile glossary button — tap to open help */}
+      <button onClick={()=>setActiveHelp(h=>h?"":helpDefs["EMA"]?"open":"")}
+        style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${activeHelp?T.accent:T.border}`,background:activeHelp?`${T.accent}15`:"transparent",color:activeHelp?T.accent:T.textSub,fontSize:10,cursor:"pointer",fontFamily:T.sans,display:"flex",alignItems:"center",gap:3}}>
+        <span style={{fontSize:11}}>ℹ</span>
+      </button>
       {TIMEFRAMES[tf]?.group==="Intraday"&&(
         <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:8,
           background:"#6366F118",color:"#818CF8",border:"1px solid #6366F130",
@@ -1555,11 +1616,19 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
         </span>
       )}
     </div>
-    {activeHelp&&activeHelp!=="__none"&&helpDefs[activeHelp]&&(
-      <div style={{background:T.surfaceB,border:`1px solid ${T.accent}40`,borderRadius:10,padding:"10px 14px",marginTop:4,position:"relative",animation:"fadeUp 0.12s ease"}}>
-        <button onClick={()=>setActiveHelp(null)} style={{position:"absolute",top:6,right:8,background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
-        <div style={{fontSize:11,fontWeight:700,color:T.accent,marginBottom:4}}>{helpDefs[activeHelp].title}</div>
-        <div style={{fontSize:11,color:T.textSub,lineHeight:1.6}}>{helpDefs[activeHelp].body}</div>
+    {/* Mobile / on-demand glossary — opened by ℹ button */}
+    {activeHelp&&(
+      <div style={{background:T.surfaceB,border:`1px solid ${T.accent}30`,borderRadius:10,padding:"12px 14px",marginTop:4,animation:"fadeUp 0.12s ease"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <span style={{fontSize:10,fontWeight:700,color:T.textSub,textTransform:"uppercase",letterSpacing:".06em"}}>Indicator Guide</span>
+          <button onClick={()=>setActiveHelp("")} style={{background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
+        </div>
+        {Object.entries(helpDefs).map(([k,h])=>(
+          <div key={k} style={{paddingBottom:7,marginBottom:7,borderBottom:`1px solid ${T.border}`}}>
+            <span style={{fontSize:11,fontWeight:700,color:h.color||T.accent}}>{k}</span>
+            <span style={{fontSize:10,color:T.textSub,lineHeight:1.5,marginLeft:8}}>{h.body}</span>
+          </div>
+        ))}
       </div>
     )}
     </div>
@@ -1920,7 +1989,7 @@ function YFInsights({symbol,price,T}){
       {cfg&&(
         <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.insightBorder}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
-            <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:3}}>Analyst Consensus · {analysts||"—"} analysts <button onClick={()=>setMetricHelp(v=>v==="cons"?null:"cons")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="cons"?"#6366F1":T.border,color:metricHelp==="cons"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
+            <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:3}}>Analyst Consensus · {analysts||"—"} analysts </div>
             <span style={{padding:"3px 12px",borderRadius:7,background:`${cfg.color}22`,color:cfg.color,fontSize:13,fontWeight:700,fontFamily:T.sans}}>{cfg.label}</span>
           </div>
           {upside!==null&&(
@@ -1936,7 +2005,7 @@ function YFInsights({symbol,price,T}){
       {/* Price target range bar */}
       {targetLow&&targetHigh&&price&&(
         <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
-          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:6}}>12-Month Price Target Range<button onClick={()=>setMetricHelp(v=>v==="target"?null:"target")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="target"?"#6366F1":T.border,color:metricHelp==="target"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
+          <div style={{fontSize:9,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans,marginBottom:6}}>12-Month Price Target Range</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontFamily:T.mono,fontSize:10,color:T.down,minWidth:44}}>${targetLow.toFixed(0)}</span>
             <div style={{flex:1,position:"relative",height:6,background:T.border,borderRadius:3}}>
@@ -2031,15 +2100,7 @@ function YFInsights({symbol,price,T}){
         </div>
       )}
 
-      {/* Metric help cards */}
-      {metricHelp&&METRIC_HELP[metricHelp]&&(
-        <div style={{padding:"8px 16px",borderBottom:`1px solid ${T.insightBorder}`}}>
-          <div style={{padding:"8px 10px",background:T.surfaceB,borderRadius:8,border:"1px solid #6366F130"}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#6366F1",marginBottom:3}}>{METRIC_HELP[metricHelp].label}</div>
-            <div style={{fontSize:10,color:T.textSub,lineHeight:1.6}}>{METRIC_HELP[metricHelp].tip}</div>
-          </div>
-        </div>
-      )}
+
       {/* Latest news */}
       {news.length>0&&(
         <div style={{padding:"10px 16px"}}>
@@ -2378,15 +2439,15 @@ function YahooRecommendations({stocks,T,refreshKey}){
                     {(r.pe||r.beta||r.w52h)&&(
                       <div style={{display:"flex",gap:0,borderTop:`1px solid ${T.border}`,paddingTop:8,flexWrap:"wrap"}}>
                         {r.pe&&<div style={{flex:1,minWidth:60,padding:"0 8px 0 0"}}>
-                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>Fwd P/E</div>
+                          <Tooltip tip={METRIC_HELP.pe?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Fwd P/E ↗</div></Tooltip>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.pe.toFixed(1)}x</div>
                         </div>}
                         {r.beta&&<div style={{flex:1,minWidth:60,padding:"0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>Beta<button onClick={()=>setMetricHelp(v=>v==="beta"?null:"beta")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="beta"?"#6366F1":T.border,color:metricHelp==="beta"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
+                          <Tooltip tip={METRIC_HELP.beta?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Beta ↗</div></Tooltip>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.beta.toFixed(2)}</div>
                         </div>}
                         {r.w52h&&<div style={{flex:2,minWidth:100,padding:"0 0 0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}>52W Range<button onClick={()=>setMetricHelp(v=>v==="w52"?null:"w52")} style={{width:14,height:14,borderRadius:"50%",background:metricHelp==="w52"?"#6366F1":T.border,color:metricHelp==="w52"?"#fff":T.textSub,border:"none",cursor:"pointer",fontSize:8,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0,marginLeft:3,verticalAlign:"middle"}}>?</button></div>
+                          <Tooltip tip={METRIC_HELP.w52?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>52W Range ↗</div></Tooltip>
                           <div style={{fontSize:11,fontWeight:600,fontFamily:T.mono}}><span style={{color:T.down}}>${r.w52l<100?r.w52l?.toFixed(1):Math.round(r.w52l)}</span><span style={{color:T.textSub}}> – </span><span style={{color:T.up}}>${r.w52h<100?r.w52h?.toFixed(1):Math.round(r.w52h)}</span></div>
                         </div>}
                       </div>
@@ -2811,7 +2872,7 @@ export default function StockScreener(){
   const removeTab=id=>{setTabs(p=>p.filter(t=>t.id!==id));if(activeTab===id)setActiveTab(tabs[0].id);};
   const removeTicker=sym=>{setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.filter(s=>s.s!==sym)}:t));if(selected?.s===sym)setSelected(null);};
 
-  const timeSince=lastRefresh?`Yahoo Finance · ${lastRefresh.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}`:"Live prices via Yahoo Finance on refresh";
+  const timeSince=lastRefresh?`Updated ${lastRefresh.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}`:"";
 
   const StockList=(
     <div style={{maxHeight:isMobile?"none":"52vh",overflowY:"auto"}}>
@@ -2964,7 +3025,7 @@ export default function StockScreener(){
 
 
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
-        Prices & charts via Yahoo Finance · Analyst data via Yahoo Finance · Not financial advice
+        Market data · Not financial advice
       </div>
 
       {alertModal&&<AlertModal symbol={alertModal.symbol} currentPrice={alertModal.price} T={T} onClose={()=>setAlertModal(null)}/>}
