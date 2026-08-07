@@ -1517,7 +1517,7 @@ function VolumePanel({data,T}){
 /* ════════════════════════════════════════════════════
    TOOLTIP — hover-delayed on desktop, tap on mobile
 ════════════════════════════════════════════════════ */
-function Tooltip({tip,children,T}){
+function HelpTip({tip,children,T}){
   const [show,setShow]=useState(false);
   const timer=React.useRef(null);
   const mob=typeof window!=="undefined"&&window.innerWidth<640;
@@ -2439,15 +2439,15 @@ function YahooRecommendations({stocks,T,refreshKey}){
                     {(r.pe||r.beta||r.w52h)&&(
                       <div style={{display:"flex",gap:0,borderTop:`1px solid ${T.border}`,paddingTop:8,flexWrap:"wrap"}}>
                         {r.pe&&<div style={{flex:1,minWidth:60,padding:"0 8px 0 0"}}>
-                          <Tooltip tip={METRIC_HELP.pe?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Fwd P/E ↗</div></Tooltip>
+                          <HelpTip tip={METRIC_HELP.pe?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Fwd P/E ↗</div></HelpTip>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.pe.toFixed(1)}x</div>
                         </div>}
                         {r.beta&&<div style={{flex:1,minWidth:60,padding:"0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <Tooltip tip={METRIC_HELP.beta?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Beta ↗</div></Tooltip>
+                          <HelpTip tip={METRIC_HELP.beta?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Beta ↗</div></HelpTip>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.beta.toFixed(2)}</div>
                         </div>}
                         {r.w52h&&<div style={{flex:2,minWidth:100,padding:"0 0 0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <Tooltip tip={METRIC_HELP.w52?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>52W Range ↗</div></Tooltip>
+                          <HelpTip tip={METRIC_HELP.w52?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>52W Range ↗</div></HelpTip>
                           <div style={{fontSize:11,fontWeight:600,fontFamily:T.mono}}><span style={{color:T.down}}>${r.w52l<100?r.w52l?.toFixed(1):Math.round(r.w52l)}</span><span style={{color:T.textSub}}> – </span><span style={{color:T.up}}>${r.w52h<100?r.w52h?.toFixed(1):Math.round(r.w52h)}</span></div>
                         </div>}
                       </div>
