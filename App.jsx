@@ -1542,6 +1542,828 @@ function HelpTip({tip,children,T}){
 }
 
 /* ════════════════════════════════════════════════════
+   TRADER'S GLOSSARY — one dictionary, used by hover/tap
+   explainers (HelpTerm) and the searchable glossary sheet
+════════════════════════════════════════════════════ */
+const GLOSSARY={
+  pe:{term:"P/E Ratio",cat:"Valuation",
+    short:"How many dollars investors pay for $1 of the company's yearly profit.",
+    why:"Pros compare P/E with the company's own history and with its peers. A high P/E means the market expects fast growth; a low one can mean cheap, or it can mean trouble."},
+  peg:{term:"PEG Ratio",cat:"Valuation",
+    short:"P/E divided by expected earnings growth. Around 1 means you pay a fair price for the growth.",
+    why:"It fixes P/E's blind spot: a P/E of 40 can be cheap for a company growing 50% a year and pricey for one growing 5%. Under about 1.5 is the usual 'reasonable price' zone in growth-at-a-reasonable-price scans."},
+  mktcap:{term:"Market Cap",cat:"Valuation",
+    short:"Share price times number of shares: the total stock-market value of the company.",
+    why:"It sets the size class. Large caps ('blue chips', roughly $10B and up) tend to move more steadily; small caps swing harder and are easier to get trapped in."},
+  fcf:{term:"Free Cash Flow (FCF)",cat:"Financial health",
+    short:"Cash left over after the company pays to run the business and buy equipment. It is what can fund dividends, buybacks, debt payments or growth.",
+    why:"Profits can be shaped by accounting; cash is much harder to fake. Pros watch for companies that report profits but burn cash. Negative FCF is not always fatal (young growth companies often have it) but it means the business depends on outside funding."},
+  de:{term:"Debt-to-Equity",cat:"Financial health",
+    short:"Total debt divided by shareholders' equity. 1.0 means debt equals what owners have put in.",
+    why:"Debt magnifies gains and losses and can sink a company when rates rise or sales dip. 'High' depends on the industry: banks and utilities run higher, software companies rarely need much."},
+  intcov:{term:"Interest Coverage",cat:"Financial health",
+    short:"How many times over the company's earnings could pay its interest bill.",
+    why:"Under about 3x, one bad quarter could make debt payments a struggle. Above about 10x, even a large debt is comfortable."},
+  margin:{term:"Net Profit Margin",cat:"Financial health",
+    short:"Cents of profit the company keeps from each dollar of sales.",
+    why:"It shows pricing power and cushion. Thin or negative margins leave little room for error when costs rise or demand slows."},
+  revgrowth:{term:"Revenue Growth",cat:"Financial health",
+    short:"How much sales grew compared with the same period a year earlier.",
+    why:"Sales are the hardest number to dress up. Shrinking revenue while the stock looks cheap is a classic value-trap pattern."},
+  liquidity:{term:"Daily Liquidity",cat:"Trading",
+    short:"How much money changes hands in the stock on a typical day (average shares traded times price).",
+    why:"In thinly traded stocks you may not be able to sell at the price you see, and a handful of orders can move the price. Many pros avoid or size down below roughly $10-20M traded per day."},
+  relvol:{term:"Relative Volume",cat:"Trading",
+    short:"Today's trading volume compared with the stock's normal volume. 2x means twice as many shares as usual.",
+    why:"Big moves on big volume are more believable; breakouts on thin volume often fail. Early in the trading day this reads low because the day is not finished."},
+  breakout:{term:"Breakout",cat:"Trading",
+    short:"Price pushing above a recent high, the level where sellers previously stepped in.",
+    why:"A breakout shows buyers overpowering sellers. Pros want it on strong volume and then watch whether price holds above the old high; many breakouts fail and fall back."},
+  rs:{term:"Relative Strength",cat:"Trading",
+    short:"How a stock performs compared with the market or its peers: beating them or lagging.",
+    why:"Leaders tend to keep leading for a while (momentum), and strong stocks often hold up better when the market falls. Not the same thing as RSI, which measures speed of the stock's own moves."},
+  rsi:{term:"RSI (Relative Strength Index)",cat:"Technicals",
+    short:"A 0 to 100 gauge of how fast price rose or fell over the last 14 days. Under 30 is called oversold, over 70 overbought.",
+    why:"It flags stretched moves. Oversold in a healthy company can precede a bounce; oversold in a failing one is just a falling knife, which is why health checks matter."},
+  ema:{term:"EMA (Exponential Moving Average)",cat:"Technicals",
+    short:"A smoothed average of recent prices that reacts faster to new moves than a simple average.",
+    why:"Price above a rising EMA suggests an uptrend; a short EMA crossing above a longer one is read as growing momentum."},
+  macd:{term:"MACD",cat:"Technicals",
+    short:"Compares two moving averages to show whether momentum is building or fading.",
+    why:"Pros watch for the MACD line crossing its signal line and for divergence from price as an early hint that a trend is tiring."},
+  bb:{term:"Bollinger Bands",cat:"Technicals",
+    short:"A channel drawn around a moving average that widens when prices are volatile.",
+    why:"Price hugging the upper band shows strength, a squeeze (narrow bands) often comes before a big move, and a close outside the bands signals an unusually stretched move."},
+  vwap:{term:"VWAP",cat:"Technicals",
+    short:"The average price of the day weighted by volume: what the typical share actually traded at.",
+    why:"Institutions use it as a benchmark. Price above VWAP means buyers are in control for the day, below means sellers."},
+  beta:{term:"Beta",cat:"Risk",
+    short:"How much the stock tends to swing compared with the overall market. 1.5 means about 50% more.",
+    why:"It tells you how bumpy the ride may be. High-beta stocks magnify market moves both ways."},
+  w52:{term:"52-Week Range",cat:"Risk",
+    short:"The lowest and highest prices over the past year.",
+    why:"Near the high suggests strong momentum; near the low can mean opportunity or continued weakness. Context decides which."},
+  consensus:{term:"Analyst Consensus",cat:"Analysts",
+    short:"The combined Buy / Hold / Sell stance of Wall Street analysts covering the stock.",
+    why:"Always check how many analysts: 3 and 30 are very different signals. Analysts lean optimistic, so 'Hold' is often a quiet warning."},
+  target:{term:"Price Target",cat:"Analysts",
+    short:"Where analysts think the stock will trade in about 12 months (average of their estimates).",
+    why:"Useful for gauging sentiment, not a promise. Targets are revised after the price moves, and analysts can be wrong or conflicted."},
+  upside:{term:"Upside to Target",cat:"Analysts",
+    short:"Percent gain needed to reach the average analyst price target from today's price.",
+    why:"Large upside with few analysts, or with falling estimates, deserves skepticism."},
+  revisions:{term:"Earnings Revisions",cat:"Analysts",
+    short:"Analysts raising or cutting their profit forecasts after new information.",
+    why:"Forecast changes tend to come in streaks, and cuts often precede disappointing results. This app's free data does not include estimate changes directly, so it tracks two proxies: drift in analyst ratings over about 3 months, and the last earnings surprise."},
+  surprise:{term:"EPS Surprise",cat:"Analysts",
+    short:"How far actual earnings per share came in above or below what analysts expected.",
+    why:"Companies that keep missing tend to see forecasts cut. Repeated beats build trust, though a beat can still sell off if guidance disappoints."},
+  valuetrap:{term:"Value Trap",cat:"Playbooks",
+    short:"A stock that looks cheap (low P/E, big drop) but is cheap for a good reason: a shrinking business, heavy debt or cash burn.",
+    why:"This is the beginner's most expensive mistake. The health flags in this app (debt, cash flow, falling expectations, thin trading) are the usual tells to check before buying a dip."},
+  bluechip:{term:"Blue Chip",cat:"Playbooks",
+    short:"A large, established company with a long record of stable operations.",
+    why:"Blue chips rarely go to zero, so a sharp dip in one is more likely to be temporary than in a small speculative name. Rarely is not never."},
+  garp:{term:"GARP",cat:"Playbooks",
+    short:"Growth At a Reasonable Price: companies growing quickly that are not wildly expensive.",
+    why:"It blends growth investing with value discipline: you want growth, but not at any price. Typical filters are a PEG under about 1.5, solid revenue growth, real profits and manageable debt."},
+  oversold:{term:"Oversold Blue Chips",cat:"Playbooks",
+    short:"Large, established companies whose recent fall pushed RSI low.",
+    why:"Pros hunt for panic dips in quality names, then check that nothing is actually broken in the business."},
+};
+const GLOSSARY_CATS=["Valuation","Financial health","Trading","Technicals","Risk","Analysts","Playbooks"];
+function openGlossary(k){
+  try{window.dispatchEvent(new CustomEvent("open-glossary",{detail:k||null}));}catch{}
+}
+
+/* HelpTerm — wraps a label. Desktop: pause the cursor for ~0.5s. Mobile / keyboard: tap or Enter. */
+function HelpTerm({k,T,children}){
+  const g=GLOSSARY[k];
+  const [open,setOpen]=useState(false);
+  const [pos,setPos]=useState({x:0,y:0,up:true});
+  const ref=useRef(null);
+  const timer=useRef(null);
+  const coarse=typeof window!=="undefined"&&!!window.matchMedia&&window.matchMedia("(hover: none)").matches;
+  const show=()=>{
+    if(ref.current){
+      const r=ref.current.getBoundingClientRect();
+      const w=Math.min(280,window.innerWidth-24);
+      const x=Math.max(12,Math.min(window.innerWidth-w-12,r.left+r.width/2-w/2));
+      const up=r.top>200;
+      setPos({x,y:up?r.top-8:r.bottom+8,up,w});
+    }
+    setOpen(true);
+  };
+  const hide=()=>{clearTimeout(timer.current);setOpen(false);};
+  useEffect(()=>{
+    if(!open)return undefined;
+    const onKey=e=>{if(e.key==="Escape")hide();};
+    const onScroll=()=>{if(!coarse)hide();};
+    window.addEventListener("keydown",onKey);
+    window.addEventListener("scroll",onScroll,true);
+    return()=>{window.removeEventListener("keydown",onKey);window.removeEventListener("scroll",onScroll,true);};
+  },[open]);// eslint-disable-line
+  useEffect(()=>()=>clearTimeout(timer.current),[]);
+  if(!g)return children;
+  const id="gt-"+k;
+  const toggle=e=>{e.stopPropagation();if(open)hide();else show();};
+  const body=(
+    <div>
+      <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:4}}>{g.term}</div>
+      <div style={{fontSize:11,color:T.text,lineHeight:1.5}}>{g.short}</div>
+      <div style={{fontSize:9,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",color:T.textSub,marginTop:8,marginBottom:3}}>Why pros care</div>
+      <div style={{fontSize:11,color:T.textSub,lineHeight:1.5}}>{g.why}</div>
+      <button onClick={e=>{e.stopPropagation();hide();openGlossary(k);}} style={{marginTop:8,padding:0,border:"none",background:"transparent",color:T.accent,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>Open glossary</button>
+    </div>
+  );
+  const pop=open?(
+    coarse
+      ?(
+        <div onClick={hide} style={{position:"fixed",inset:0,zIndex:3000,background:"rgba(0,0,0,0.35)"}}>
+          <div id={id} role="dialog" aria-label={g.term} onClick={e=>e.stopPropagation()}
+            style={{position:"absolute",left:0,right:0,bottom:0,background:T.surface,borderTop:`1px solid ${T.border}`,borderRadius:"14px 14px 0 0",padding:"16px 16px 22px",maxHeight:"70vh",overflowY:"auto",boxShadow:"0 -8px 30px rgba(0,0,0,0.4)"}}>
+            {body}
+            <button onClick={hide} style={{marginTop:14,width:"100%",padding:"10px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:12,cursor:"pointer",fontFamily:T.sans}}>Close</button>
+          </div>
+        </div>
+      )
+      :(
+        <div id={id} role="tooltip"
+          style={{position:"fixed",left:pos.x,top:pos.y,width:pos.w||280,transform:pos.up?"translateY(-100%)":"none",zIndex:3000,background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 12px",boxShadow:"0 8px 28px rgba(0,0,0,0.45)",textAlign:"left",fontFamily:T.sans,fontWeight:400,textTransform:"none",letterSpacing:0}}
+          onClick={e=>e.stopPropagation()} onMouseEnter={()=>clearTimeout(timer.current)} onMouseLeave={hide}>
+          {body}
+        </div>
+      )
+  ):null;
+  return(
+    <span ref={ref} role="button" tabIndex={0} aria-describedby={open?id:undefined}
+      onMouseEnter={()=>{if(coarse)return;clearTimeout(timer.current);timer.current=setTimeout(show,500);}}
+      onMouseLeave={()=>{if(coarse)return;clearTimeout(timer.current);timer.current=setTimeout(hide,150);}}
+      onFocus={()=>{if(!coarse)show();}}
+      onBlur={()=>{if(!coarse)hide();}}
+      onClick={toggle}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle(e);}}}
+      style={{borderBottom:`1px dotted ${T.textSub}`,cursor:"help",outline:"none"}}>
+      {children}
+      {pop}
+    </span>
+  );
+}
+
+/* Searchable glossary sheet */
+function GlossarySheet({T,focus,onClose}){
+  const [q,setQ]=useState("");
+  const focusRef=useRef(null);
+  useEffect(()=>{
+    const onKey=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",onKey);
+    return()=>window.removeEventListener("keydown",onKey);
+  },[onClose]);
+  useEffect(()=>{
+    if(focus&&focusRef.current&&focusRef.current.scrollIntoView)focusRef.current.scrollIntoView({block:"center"});
+  },[focus]);
+  const ql=q.trim().toLowerCase();
+  const keys=Object.keys(GLOSSARY).filter(k=>{
+    if(!ql)return true;
+    const g=GLOSSARY[k];
+    return (g.term+" "+g.short+" "+g.why).toLowerCase().indexOf(ql)>=0;
+  });
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:2500,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+      <div onClick={e=>e.stopPropagation()} role="dialog" aria-label="Trader's Glossary"
+        style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,boxShadow:"0 12px 40px rgba(0,0,0,0.5)",fontFamily:T.sans}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:15,fontWeight:700,color:T.text,flex:1}}>Trader's Glossary</div>
+          <button onClick={onClose} aria-label="Close glossary" style={{padding:"4px 8px",borderRadius:6,border:"none",background:T.border,color:T.textSub,cursor:"pointer"}}><I.X s={11}/></button>
+        </div>
+        <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.border}`}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search terms (e.g. cash flow, RSI, debt)" autoFocus={!focus}
+            style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:13,outline:"none",fontFamily:T.sans}}/>
+        </div>
+        <div style={{overflowY:"auto",padding:"4px 16px 16px"}}>
+          {GLOSSARY_CATS.map(cat=>{
+            const items=keys.filter(k=>GLOSSARY[k].cat===cat);
+            if(!items.length)return null;
+            return(
+              <div key={cat}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,margin:"16px 0 6px"}}>{cat}</div>
+                {items.map(k=>{
+                  const g=GLOSSARY[k];
+                  const isF=focus===k;
+                  return(
+                    <div key={k} ref={isF?focusRef:null} style={{padding:"10px 12px",marginBottom:6,borderRadius:10,border:`1px solid ${isF?T.accent:T.border}`,background:isF?T.accentBg:T.surfaceB}}>
+                      <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:3}}>{g.term}</div>
+                      <div style={{fontSize:12,color:T.text,lineHeight:1.55}}>{g.short}</div>
+                      <div style={{fontSize:12,color:T.textSub,lineHeight:1.55,marginTop:5}}><b style={{color:T.textSub}}>Why pros care: </b>{g.why}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {keys.length===0&&<div style={{padding:"24px 0",textAlign:"center",fontSize:12,color:T.textSub}}>No terms match "{q}".</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   FUNDAMENTALS CLIENT — cached batch fetch from /api/fundamentals
+════════════════════════════════════════════════════ */
+const FUND_KEY="screener_fund_v1";
+function readFundCache(){try{return JSON.parse(localStorage.getItem(FUND_KEY)||"{}")||{};}catch{return {};}}
+function writeFundCache(c){try{localStorage.setItem(FUND_KEY,JSON.stringify(c));}catch{}}
+async function fetchFundamentals(syms,opts){
+  const o=opts||{};
+  const lite=!!o.lite;
+  const maxAge=o.maxAge!=null?o.maxAge:6*3600e3;
+  const cache=readFundCache();
+  const now=Date.now();
+  const out={};
+  const need=[];
+  syms.forEach(s=>{
+    const c=cache[s];
+    if(!o.force&&c&&now-c.fetchedAt<maxAge&&(lite||!c.lite))out[s]=c;else need.push(s);
+  });
+  if(o.onBatch&&Object.keys(out).length)o.onBatch(Object.assign({},out));
+  const batches=[];
+  for(let i=0;i<need.length;i+=8)batches.push(need.slice(i,i+8));
+  const fresh={};
+  let idx=0;
+  const worker=async()=>{
+    while(idx<batches.length){
+      const b=batches[idx++];
+      try{
+        const r=await fetch(`/api/fundamentals?symbols=${b.join(",")}${lite?"&lite=1":""}`,{signal:AbortSignal.timeout(25000)});
+        if(!r.ok||(r.headers.get("content-type")||"").indexOf("json")<0)continue;
+        const j=await r.json();
+        const d=j.data||{};
+        const got={};
+        Object.keys(d).forEach(s=>{
+          if(d[s]&&(d[s].hasMetrics||d[s].tech)){out[s]=d[s];fresh[s]=d[s];got[s]=d[s];}
+        });
+        if(o.onBatch&&Object.keys(got).length)o.onBatch(got);
+      }catch{}
+    }
+  };
+  await Promise.all([worker(),worker()]);
+  if(Object.keys(fresh).length){
+    const latest=readFundCache();
+    Object.assign(latest,fresh);
+    writeFundCache(latest);
+  }
+  return out;
+}
+
+/* ════════════════════════════════════════════════════
+   HEALTH CHECK — red-flag engine (runs in the browser so
+   thresholds can be tuned without redeploying the API)
+════════════════════════════════════════════════════ */
+const SECTOR_OF={
+  AAPL:"tech",MSFT:"tech",NVDA:"tech",AVGO:"tech",ORCL:"tech",AMD:"tech",CRM:"tech",ADBE:"tech",INTC:"tech",CSCO:"tech",QCOM:"tech",PLTR:"tech",
+  GOOGL:"comm",META:"comm",NFLX:"comm",DIS:"comm",T:"comm",VZ:"comm",
+  AMZN:"disc",TSLA:"disc",HD:"disc",NKE:"disc",MCD:"disc",LOW:"disc",
+  WMT:"staples",COST:"staples",PG:"staples",KO:"staples",PEP:"staples",
+  JPM:"fin",BAC:"fin",GS:"fin",V:"fin",MA:"fin",WFC:"fin",AXP:"fin",
+  UNH:"health",JNJ:"health",LLY:"health",PFE:"health",MRK:"health",ABBV:"health",TMO:"health",
+  XOM:"energy",CVX:"energy",CAT:"ind",BA:"ind",GE:"ind",UPS:"ind",NEE:"util",
+};
+const POPULAR_50=Object.keys(SECTOR_OF);
+const fmtMoneyM=n=>{
+  const a=Math.abs(n);
+  const s=a>=1e6?(a/1e6).toFixed(1)+"T":a>=1e3?(a/1e3).toFixed(1)+"B":a.toFixed(0)+"M";
+  return (n<0?"-$":"$")+s;
+};
+const fmtMoney=n=>{
+  const a=Math.abs(n);
+  return "$"+(a>=1e9?(a/1e9).toFixed(1)+"B":a>=1e6?(a/1e6).toFixed(1)+"M":a>=1e3?(a/1e3).toFixed(0)+"K":a.toFixed(0));
+};
+function computeHealth(f,sector){
+  const flags=[];
+  let checks=0;
+  if(!f)return {level:"nodata",label:"No data",flags:[],checks:0};
+  const tech=f.tech||{};
+
+  // 1. Debt load (not meaningful for banks / payment companies)
+  if(sector!=="fin"&&f.debtToEquity!=null){
+    checks++;
+    const de=f.debtToEquity;
+    const lim=sector==="util"?{w:2.5,c:4}:{w:1.5,c:3};
+    const cov=f.interestCoverage;
+    if(de<0){
+      flags.push({id:"debt",sev:"info",title:"Negative shareholder equity",term:"de",
+        detail:"Shareholders' equity is negative, which often happens after big buybacks. The debt ratio is not meaningful here, so look at total debt and interest coverage instead."});
+    }else if(de>=lim.w){
+      let sev=de>=lim.c?"caution":"watch";
+      let extra="";
+      if(cov!=null&&cov>=10){
+        sev=sev==="caution"?"watch":"info";
+        extra=` Earnings cover interest about ${cov.toFixed(0)}x, which makes it much more manageable.`;
+      }else if(cov!=null&&cov<3){
+        sev="caution";
+        extra=` Earnings cover interest only ${cov.toFixed(1)}x, which is thin.`;
+      }
+      flags.push({id:"debt",sev,title:"High debt load",term:"de",
+        detail:`Debt is ${de.toFixed(1)}x shareholders' equity (typical comfort level here is under ${lim.w}).${extra}`});
+    }
+  }
+
+  // 2. Free cash flow
+  if(f.fcfTTM!=null){
+    checks++;
+    if(f.fcfTTM<0){
+      flags.push({id:"fcf",sev:"caution",title:"Negative free cash flow",term:"fcf",
+        detail:`Free cash flow over the last 12 months is ${fmtMoneyM(f.fcfTTM)}: the business spent more cash than it brought in, so it relies on cash reserves, borrowing or selling new shares.`});
+    }
+  }
+
+  // 3. Profitability
+  if(f.netMarginPct!=null){
+    checks++;
+    if(f.netMarginPct<0){
+      flags.push({id:"margin",sev:"watch",title:"Losing money",term:"margin",
+        detail:`Net profit margin is ${f.netMarginPct.toFixed(1)}%: the company lost money over the last 12 months.`});
+    }
+  }
+
+  // 4. Shrinking sales
+  if(f.revGrowthPct!=null){
+    checks++;
+    if(f.revGrowthPct<0){
+      flags.push({id:"rev",sev:f.revGrowthPct<-10?"caution":"watch",title:"Shrinking revenue",term:"revgrowth",
+        detail:`Revenue is ${f.revGrowthPct.toFixed(1)}% versus a year ago. A cheap-looking stock with falling sales is a classic value trap.`});
+    }
+  }
+
+  // 5. Falling expectations (proxy for negative earnings revisions)
+  const d=f.ratingDrift;
+  const sp=f.lastSurprisePct;
+  if(d||sp!=null){
+    checks++;
+    const lines=[];
+    let sev=null;
+    if(d&&d.delta<=-0.25){
+      sev=d.delta<=-0.5?"caution":"watch";
+      lines.push(`Analyst ratings have cooled over about 3 months (net score ${d.then.toFixed(2)} to ${d.now.toFixed(2)} on a -2 to +2 scale).`);
+    }
+    if(sp!=null&&sp<=-5){
+      if(sev!=="caution")sev="watch";
+      lines.push(`The last earnings report missed estimates by ${Math.abs(sp).toFixed(1)}%.`);
+    }
+    if(sev){
+      flags.push({id:"rev-est",sev,title:"Falling analyst expectations",term:"revisions",detail:lines.join(" ")});
+    }
+  }
+
+  // 6. Liquidity
+  const px=tech.price;
+  const dollarVol=tech.avgDollarVol20!=null?tech.avgDollarVol20:(f.avgVolShares!=null&&px?f.avgVolShares*px:null);
+  if(dollarVol!=null){
+    checks++;
+    if(dollarVol<5e6){
+      flags.push({id:"liq",sev:"caution",title:"Very thin trading",term:"liquidity",
+        detail:`Only about ${fmtMoney(dollarVol)} changes hands on a typical day. You may struggle to sell at the price you see, and small orders can move the price.`});
+    }else if(dollarVol<2e7){
+      flags.push({id:"liq",sev:"watch",title:"Low daily liquidity",term:"liquidity",
+        detail:`About ${fmtMoney(dollarVol)} trades on a typical day. Fine for small orders, but exits can be bumpy in a sell-off.`});
+    }
+  }
+
+  const cautions=flags.filter(x=>x.sev==="caution").length;
+  const watches=flags.filter(x=>x.sev==="watch").length;
+  const sevRank={caution:0,watch:1,info:2};
+  flags.sort((a,b)=>sevRank[a.sev]-sevRank[b.sev]);
+  let level="ok";
+  if(checks<2)level="nodata";
+  else if(cautions>0||watches>=3)level="caution";
+  else if(watches>0)level="watch";
+  const label={ok:"No flags",watch:"Watch",caution:"Caution",nodata:"No data"}[level];
+  return {level,label,flags,checks,lite:!!f.lite};
+}
+const HEALTH_COLOR=T=>({ok:T.up,watch:"#F59E0B",caution:T.down,nodata:T.textSub});
+
+function HealthBadge({h,T}){
+  if(!h||h.level==="nodata")return null;
+  const c=HEALTH_COLOR(T)[h.level];
+  const n=h.flags.filter(x=>x.sev!=="info").length;
+  const tip=h.level==="ok"?"No red flags found in debt, cash flow, profits, sales, analyst trend or liquidity":h.flags.filter(x=>x.sev!=="info").map(x=>x.title).join(", ");
+  return(
+    <span title={tip} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:10,background:`${c}18`,border:`1px solid ${c}40`,color:c,fontSize:9,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap",fontFamily:T.sans}}>
+      <span style={{width:5,height:5,borderRadius:"50%",background:c}}/>
+      {h.label}{n>0&&h.level!=="ok"?` · ${n}`:""}
+    </span>
+  );
+}
+
+function HealthPanel({h,loading,T}){
+  const colors=HEALTH_COLOR(T);
+  const sevColor={caution:T.down,watch:"#F59E0B",info:T.textSub};
+  const sevLabel={caution:"Caution",watch:"Watch",info:"Note"};
+  return(
+    <div style={{background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12,padding:"12px 16px",marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:h&&h.flags.length?10:0,flexWrap:"wrap"}}>
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Health Check</div>
+        {h&&h.level!=="nodata"&&<HealthBadge h={h} T={T}/>}
+        <HelpTerm k="valuetrap" T={T}><span style={{fontSize:10,color:T.textSub}}>Avoid value traps</span></HelpTerm>
+      </div>
+      {loading&&!h&&<div style={{fontSize:11,color:T.textSub,animation:"pulse 1.2s infinite"}}>Checking debt, cash flow, margins and liquidity…</div>}
+      {!loading&&(!h||h.level==="nodata")&&(
+        <div style={{fontSize:11,color:T.textSub,lineHeight:1.5,marginTop:6}}>Not enough fundamentals data to run the check. This is normal for ETFs, funds and very new listings.</div>
+      )}
+      {h&&h.level==="ok"&&(
+        <div style={{fontSize:11,color:T.textSub,lineHeight:1.5,marginTop:6}}>
+          <span style={{color:colors.ok,fontWeight:700}}>No red flags</span> in debt, free cash flow, profits, sales, analyst trend or daily liquidity. That does not make it a good buy; it only means the usual value-trap warning signs are absent.
+        </div>
+      )}
+      {h&&h.flags.map(fl=>(
+        <div key={fl.id} style={{display:"flex",gap:10,padding:"8px 0",borderTop:`1px solid ${T.insightBorder}`}}>
+          <span style={{marginTop:5,width:7,height:7,borderRadius:"50%",background:sevColor[fl.sev],flexShrink:0}}/>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.text}}>
+              <HelpTerm k={fl.term} T={T}>{fl.title}</HelpTerm>
+              <span style={{marginLeft:8,fontSize:9,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",color:sevColor[fl.sev]}}>{sevLabel[fl.sev]}</span>
+            </div>
+            <div style={{fontSize:11,color:T.textSub,lineHeight:1.55,marginTop:2}}>{fl.detail}</div>
+          </div>
+        </div>
+      ))}
+      {h&&h.level!=="nodata"&&(
+        <div style={{fontSize:9,color:T.textSub,lineHeight:1.5,marginTop:8,borderTop:`1px solid ${T.insightBorder}`,paddingTop:8}}>
+          Flags are prompts to research, not buy or sell signals. Based on public financial data that can be delayed or incomplete.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   TRADER PLAYBOOKS — ready-made scans over ~50 popular stocks
+════════════════════════════════════════════════════ */
+const okc=(pass,close)=>pass===true?"pass":pass===false?(close?"close":"fail"):"nodata";
+const PLAYBOOKS=[
+  {id:"garp",name:"GARP",tagline:"Growth at a reasonable price",term:"garp",
+    blurb:"Companies growing fast that are not wildly expensive, are actually profitable and do not carry heavy debt.",
+    sortLabel:"Lowest PEG first",
+    rank:(f)=>f.peg!=null?f.peg:99,
+    criteria:(f,sector)=>{
+      const peg=f.peg;
+      const profitable=f.netMarginPct!=null?f.netMarginPct>0:(f.pe!=null?f.pe>0:null);
+      const de=f.debtToEquity;
+      const deNA=sector==="fin";
+      return [
+        {id:"peg",term:"peg",label:"PEG under 1.5",got:peg!=null?"PEG "+peg.toFixed(2):"no data",
+          state:peg==null?"nodata":okc(peg>0&&peg<1.5,peg>0&&peg<2)},
+        {id:"rev",term:"revgrowth",label:"Revenue growth over 10%",got:f.revGrowthPct!=null?"Sales "+(f.revGrowthPct>=0?"+":"")+f.revGrowthPct.toFixed(0)+"%":"no data",
+          state:f.revGrowthPct==null?"nodata":okc(f.revGrowthPct>10,f.revGrowthPct>7)},
+        {id:"prof",term:"margin",label:"Profitable",got:profitable==null?"no data":profitable?"Profitable"+(f.netMarginPct!=null?" ("+f.netMarginPct.toFixed(0)+"% margin)":""):"Not profitable",
+          state:profitable==null?"nodata":okc(profitable,false)},
+        {id:"debt",term:"de",label:"Debt-to-equity under 1",got:deNA?"n/a for financials":de!=null?(de<0?"Negative equity":"D/E "+de.toFixed(2)):"no data",
+          state:deNA?"pass":de==null?"nodata":okc(de>=0&&de<1,de>=0&&de<1.5)},
+      ];
+    }},
+  {id:"oversold",name:"Oversold Blue Chips",tagline:"Big, established names on a sharp dip",term:"oversold",
+    blurb:"Companies worth over $50B whose RSI has dropped under 35, the kind of dip pros watch for a bounce. Check the health badge before trusting a dip.",
+    sortLabel:"Lowest RSI first",
+    rank:(f)=>f.tech&&f.tech.rsi!=null?f.tech.rsi:99,
+    criteria:(f)=>{
+      const cap=f.marketCapM;
+      const rsi=f.tech?f.tech.rsi:null;
+      return [
+        {id:"cap",term:"mktcap",label:"Market cap over $50B",got:cap!=null?"Cap "+fmtMoneyM(cap):"no data",
+          state:cap==null?"nodata":okc(cap>50000,cap>30000)},
+        {id:"rsi",term:"rsi",label:"RSI under 35",got:rsi!=null?"RSI "+rsi.toFixed(0):"no data",
+          state:rsi==null?"nodata":okc(rsi<35,rsi<40)},
+      ];
+    }},
+  {id:"breakout",name:"High Relative Volume Breakouts",tagline:"Momentum with real participation",term:"breakout",
+    blurb:"Stocks trading at 2x or more of their normal volume, pushing to a 20-day high and up on the day. These are rare on quiet days, so near-misses are shown too.",
+    sortLabel:"Highest relative volume first",
+    rank:(f)=>-(f.tech&&f.tech.relVol!=null?f.tech.relVol:0),
+    criteria:(f)=>{
+      const t=f.tech||{};
+      return [
+        {id:"rv",term:"relvol",label:"Volume at least 2x normal",got:t.relVol!=null?t.relVol.toFixed(1)+"x volume"+(t.volumePartial?" so far":""):"no data",
+          state:t.relVol==null?"nodata":okc(t.relVol>=2,t.relVol>=1.5)},
+        {id:"hi",term:"breakout",label:"At a 20-day high",got:t.high20!=null&&t.price!=null?(t.atHigh20?"At 20-day high":((t.price/t.high20-1)*100).toFixed(1)+"% from high"):"no data",
+          state:t.high20==null||t.price==null?"nodata":okc(!!t.atHigh20,t.price>=t.high20*0.97)},
+        {id:"up",term:"rs",label:"Up on the day",got:t.changePct!=null?(t.changePct>=0?"+":"")+t.changePct.toFixed(1)+"% today":"no data",
+          state:t.changePct==null?"nodata":okc(t.changePct>0,false)},
+      ];
+    }},
+];
+function evalPlaybook(pb,uni){
+  const matches=[];
+  const near=[];
+  Object.keys(uni).forEach(sym=>{
+    const f=uni[sym];
+    const sector=SECTOR_OF[sym];
+    const cr=pb.criteria(f,sector);
+    const passN=cr.filter(c=>c.state==="pass").length;
+    const closeN=cr.filter(c=>c.state==="close").length;
+    const failN=cr.filter(c=>c.state==="fail"||c.state==="nodata").length;
+    const row={sym,f,cr,rank:pb.rank(f),health:computeHealth(f,sector)};
+    if(passN===cr.length)matches.push(row);
+    else if(failN===0&&closeN>0)near.push(row);
+  });
+  matches.sort((a,b)=>a.rank-b.rank);
+  near.sort((a,b)=>a.rank-b.rank);
+  return {matches,near:near.slice(0,8)};
+}
+function PlaybookRow({row,names,T,inList,onAdd}){
+  const st={pass:{c:T.up,m:"✓"},close:{c:"#F59E0B",m:"≈"},fail:{c:T.down,m:"✕"},nodata:{c:T.textSub,m:"?"}};
+  const t=row.f.tech||{};
+  return(
+    <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <div style={{minWidth:0,flex:"1 1 140px"}}>
+          <span style={{fontSize:13,fontWeight:700,color:T.text}}>{row.sym}</span>
+          <span style={{fontSize:10,color:T.textSub,marginLeft:6}}>{names[row.sym]||""}</span>
+        </div>
+        {t.price!=null&&<span style={{fontSize:12,fontWeight:700,color:T.text,fontVariantNumeric:"tabular-nums"}}>${t.price.toFixed(2)}</span>}
+        {t.changePct!=null&&<span style={{fontSize:11,fontWeight:600,color:t.changePct>=0?T.up:T.down,fontVariantNumeric:"tabular-nums"}}>{t.changePct>=0?"+":""}{t.changePct.toFixed(2)}%</span>}
+        <HealthBadge h={row.health} T={T}/>
+        <button onClick={onAdd} disabled={inList} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${inList?T.border:T.accent}`,background:"transparent",color:inList?T.textSub:T.accent,fontSize:10,fontWeight:600,cursor:inList?"default":"pointer",fontFamily:T.sans}}>{inList?"In list":"+ Watch"}</button>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:7}}>
+        {row.cr.map(c=>(
+          <span key={c.id} title={c.label} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:6,border:`1px solid ${st[c.state].c}40`,background:`${st[c.state].c}12`,color:st[c.state].c,fontSize:10,fontWeight:600,fontFamily:T.sans}}>
+            <span>{st[c.state].m}</span>
+            <HelpTerm k={c.term} T={T}><span>{c.got}</span></HelpTerm>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+function PlaybooksPanel({T,names,tabSymbols,onAdd}){
+  const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_pb_open")==="1";}catch{return false;}});
+  const [pbId,setPbId]=useState(null);
+  const [uni,setUni]=useState({});
+  const [loading,setLoading]=useState(false);
+  const [ranAt,setRanAt]=useState(null);
+  const [showNear,setShowNear]=useState(true);
+  useEffect(()=>{try{localStorage.setItem("screener_pb_open",open?"1":"0");}catch{}},[open]);
+  const run=async(id,force)=>{
+    setPbId(id);setLoading(true);
+    try{
+      await fetchFundamentals(POPULAR_50,{lite:true,maxAge:30*60e3,force:!!force,onBatch:m=>setUni(p=>Object.assign({},p,m))});
+      setRanAt(new Date());
+    }finally{setLoading(false);}
+  };
+  const pb=PLAYBOOKS.find(p=>p.id===pbId);
+  const res=useMemo(()=>pb?evalPlaybook(pb,uni):null,[pb,uni]);
+  const scanned=Object.keys(uni).length;
+  return(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,marginBottom:14,boxShadow:T.shadow,overflow:"hidden"}}>
+      <button onClick={()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.sans}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Trader Playbooks</span>
+        <span style={{fontSize:11,color:T.textSub,flex:1}}>Ready-made scans of 50 popular stocks. No filters to build.</span>
+        <span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>
+      </button>
+      {open&&(
+        <div style={{borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",gap:8,padding:"12px 12px 4px",flexWrap:"wrap"}}>
+            {PLAYBOOKS.map(p=>{
+              const on=pbId===p.id;
+              return(
+                <button key={p.id} onClick={()=>run(p.id,false)} style={{flex:"1 1 180px",textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1px solid ${on?T.accent:T.border}`,background:on?T.accentBg:T.surfaceB,cursor:"pointer",fontFamily:T.sans}}>
+                  <div style={{fontSize:12,fontWeight:700,color:T.text}}>{p.name}</div>
+                  <div style={{fontSize:10,color:T.textSub,marginTop:2}}>{p.tagline}</div>
+                </button>
+              );
+            })}
+          </div>
+          {!pb&&<div style={{padding:"8px 16px 14px",fontSize:11,color:T.textSub,lineHeight:1.5}}>Pick a playbook to scan. Each result shows exactly which rules it met, and the health badge warns you about value traps.</div>}
+          {pb&&(
+            <div style={{padding:"8px 0 0"}}>
+              <div style={{padding:"4px 16px 10px"}}>
+                <div style={{fontSize:12,color:T.text,lineHeight:1.55}}>
+                  <HelpTerm k={pb.term} T={T}><b>{pb.name}</b></HelpTerm>{": "}{pb.blurb}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6,fontSize:10,color:T.textSub,flexWrap:"wrap"}}>
+                  <span>{loading?`Scanning… ${scanned}/${POPULAR_50.length}`:`${scanned} stocks scanned${ranAt?" at "+ranAt.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}):""}`}</span>
+                  <span>{pb.sortLabel}</span>
+                  <button onClick={()=>run(pb.id,true)} disabled={loading} style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:10,cursor:loading?"default":"pointer",fontFamily:T.sans}}>Rescan</button>
+                </div>
+              </div>
+              {res&&(
+                <div>
+                  <div style={{padding:"6px 16px",fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,background:T.surfaceB}}>Matches ({res.matches.length})</div>
+                  {res.matches.length===0&&!loading&&(
+                    <div style={{padding:"12px 16px",fontSize:11,color:T.textSub,lineHeight:1.5}}>No stock meets every rule right now. That is normal for strict scans, and a good lesson: good setups are rare. The closest candidates are below.</div>
+                  )}
+                  {res.matches.map(r=>(<PlaybookRow key={r.sym} row={r} names={names} T={T} inList={tabSymbols.indexOf(r.sym)>=0} onAdd={()=>onAdd(r.sym)}/>))}
+                  {res.near.length>0&&(
+                    <div>
+                      <button onClick={()=>setShowNear(v=>!v)} style={{width:"100%",textAlign:"left",padding:"6px 16px",fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,background:T.surfaceB,border:"none",borderTop:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.sans}}>
+                        Near misses ({res.near.length}) · {showNear?"hide":"show"}
+                      </button>
+                      {showNear&&res.near.map(r=>(<PlaybookRow key={r.sym} row={r} names={names} T={T} inList={tabSymbols.indexOf(r.sym)>=0} onAdd={()=>onAdd(r.sym)}/>))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div style={{padding:"10px 16px",fontSize:9,color:T.textSub,lineHeight:1.5,borderTop:`1px solid ${T.border}`}}>
+                ✓ rule met · ≈ close to meeting it · ✕ not met · ? no data. Scans use end-of-day and delayed data and skip the analyst-trend check. Educational tool, not a recommendation to buy or sell.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   EARNINGS THIS WEEK — Mon-Fri calendar + watchlist snapshot
+════════════════════════════════════════════════════ */
+function ewWeekRange(){
+  const now=new Date();
+  const dow=now.getDay(); // 0 Sun .. 6 Sat (local)
+  const add=dow===0?1:dow===6?2:1-dow;
+  const mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()+add);
+  const days=[];
+  for(let i=0;i<5;i++){
+    const d=new Date(mon.getFullYear(),mon.getMonth(),mon.getDate()+i);
+    const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),dd=String(d.getDate()).padStart(2,"0");
+    days.push({iso:`${y}-${m}-${dd}`,dow:["SUN","MON","TUE","WED","THU","FRI","SAT"][d.getDay()],label:d.toLocaleString("en-US",{month:"short",day:"numeric"})});
+  }
+  return days;
+}
+const EW_SLOTS=[["bmo","Before the open"],["dmh","During hours"],["amc","After the close"],["","Time not set"]];
+const ewSlot=h=>h==="bmo"||h==="amc"||h==="dmh"?h:"";
+const ewSlotLabel=h=>({bmo:"Before open",amc:"After close",dmh:"During hours"}[h]||"Time not set");
+
+function EwChip({label,value,color,T}){
+  return(
+    <div style={{padding:"6px 12px",borderRadius:10,background:T.surfaceB,border:`1px solid ${T.border}`,minWidth:84}}>
+      <div style={{fontSize:15,fontWeight:700,color:color||T.text,fontVariantNumeric:"tabular-nums"}}>{value}</div>
+      <div style={{fontSize:9,color:T.textSub,marginTop:1,letterSpacing:".04em"}}>{label}</div>
+    </div>
+  );
+}
+function EarningsWeek({symbols,stocks,healthMap,names,T}){
+  const days=useMemo(ewWeekRange,[]);
+  const from=days[0].iso,to=days[4].iso;
+  const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_ew_open")!=="0";}catch{return true;}});
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState(null);
+  const [expanded,setExpanded]=useState({});
+  useEffect(()=>{try{localStorage.setItem("screener_ew_open",open?"1":"0");}catch{}},[open]);
+  const watchKey=symbols.slice().sort().join(",");
+  useEffect(()=>{
+    let dead=false;
+    const ck="screener_ew_v1_"+from;
+    try{
+      const c=JSON.parse(localStorage.getItem(ck)||"null");
+      if(c&&c.key===watchKey&&Date.now()-c.t<3*3600e3&&c.data){setData(c.data);setLoading(false);return undefined;}
+    }catch{}
+    setLoading(true);setErr(null);
+    const keep=[...new Set([...symbols,...POPULAR_50])].join(",");
+    fetch(`/api/earnings-week?from=${from}&to=${to}&symbols=${encodeURIComponent(keep)}&watch=${encodeURIComponent(symbols.slice(0,10).join(","))}`,{signal:AbortSignal.timeout(25000)})
+      .then(r=>{
+        if(!r.ok||(r.headers.get("content-type")||"").indexOf("json")<0)throw new Error("Earnings calendar unavailable");
+        return r.json();
+      })
+      .then(j=>{
+        if(dead)return;
+        if(j.error)throw new Error(j.error);
+        setData(j);
+        try{localStorage.setItem(ck,JSON.stringify({key:watchKey,t:Date.now(),data:j}));}catch{}
+      })
+      .catch(e=>{if(!dead)setErr(e.message||"Earnings calendar unavailable");})
+      .finally(()=>{if(!dead)setLoading(false);});
+    return()=>{dead=true;};
+  },[watchKey,from]);// eslint-disable-line
+
+  const watchSet=useMemo(()=>new Set(symbols),[watchKey]);// eslint-disable-line
+  const events=data&&data.events?data.events:[];
+  const moves=data&&data.moves?data.moves:{};
+  const mine=events.filter(e=>watchSet.has(e.symbol));
+  const byDay=useMemo(()=>{
+    const o={};
+    days.forEach(d=>{o[d.iso]=[];});
+    events.forEach(e=>{if(o[e.date])o[e.date].push(e);});
+    return o;
+  },[events,days]);
+  const dayName=iso=>{const d=days.find(x=>x.iso===iso);return d?d.dow+" "+d.label:iso;};
+
+  // Watchlist snapshot (active tab)
+  const priced=stocks.filter(x=>x.p&&x.pc);
+  const upN=priced.filter(x=>x.p>=x.pc).length;
+  const downN=priced.length-upN;
+  const cautionN=stocks.filter(x=>healthMap[x.s]&&healthMap[x.s].level==="caution").length;
+  const watchN=stocks.filter(x=>healthMap[x.s]&&healthMap[x.s].level==="watch").length;
+  const reportingN=stocks.filter(x=>mine.some(e=>e.symbol===x.s)).length;
+  const rangeLabel=days[0].label+" – "+days[4].label;
+  return(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,marginBottom:14,boxShadow:T.shadow,overflow:"hidden"}}>
+      <button onClick={()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.sans}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Earnings This Week</span>
+        <span style={{fontSize:11,color:T.textSub,flex:1}}>{rangeLabel}{data?` · ${events.length} reports, ${mine.length} on your watchlists`:""}</span>
+        <span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>
+      </button>
+      {open&&(
+        <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 14px 14px"}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+            <EwChip label="Stocks in this list" value={stocks.length} T={T}/>
+            <EwChip label="Up today" value={upN} color={T.up} T={T}/>
+            <EwChip label="Down today" value={downN} color={T.down} T={T}/>
+            <EwChip label="Report this week" value={reportingN} color={reportingN?T.accent:T.text} T={T}/>
+            <EwChip label="Caution flags" value={cautionN} color={cautionN?T.down:T.text} T={T}/>
+            <EwChip label="Watch flags" value={watchN} color={watchN?"#F59E0B":T.text} T={T}/>
+          </div>
+
+          {loading&&<div style={{fontSize:11,color:T.textSub,animation:"pulse 1.2s infinite",padding:"6px 0"}}>Loading this week's earnings…</div>}
+          {!loading&&err&&<div style={{fontSize:11,color:T.textSub,padding:"6px 0"}}>{err}. Make sure api/earnings-week.js is deployed and FINNHUB_API_KEY is set.</div>}
+
+          {!loading&&!err&&(
+            <div>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginBottom:6}}>Your watchlists</div>
+              {mine.length===0&&<div style={{fontSize:11,color:T.textSub,marginBottom:12}}>None of your {symbols.length} tickers report this week.</div>}
+              {mine.length>0&&(
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:8,marginBottom:14}}>
+                  {mine.slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0).map(e=>{
+                    const m=moves[e.symbol];
+                    const h=healthMap[e.symbol];
+                    return(
+                      <div key={e.symbol} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.accent}55`,background:T.accentBg}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontSize:13,fontWeight:700,color:T.text}}>{e.symbol}</span>
+                          <span style={{fontSize:10,color:T.textSub,flex:1}}>{dayName(e.date)} · {ewSlotLabel(ewSlot(e.hour))}</span>
+                          <HealthBadge h={h} T={T}/>
+                        </div>
+                        <div style={{fontSize:11,color:T.text,marginTop:6,fontVariantNumeric:"tabular-nums"}}>
+                          {e.epsEstimate!=null?<span>EPS est. ${e.epsEstimate.toFixed(2)}</span>:<span style={{color:T.textSub}}>No EPS estimate</span>}
+                          {e.revenueEstimate!=null&&<span style={{color:T.textSub}}> · Rev. {fmtMoney(e.revenueEstimate)}</span>}
+                        </div>
+                        {m?(
+                          <div style={{fontSize:10,color:T.textSub,marginTop:4,lineHeight:1.5}}>
+                            Avg move after last {m.n} reports <b style={{color:T.text}}>±{m.avgAbsPct.toFixed(1)}%</b>
+                            {" · "}last <b style={{color:m.lastPct>=0?T.up:T.down}}>{m.lastPct>=0?"+":""}{m.lastPct.toFixed(1)}%</b>
+                            {" · "}up {m.up} of {m.n}
+                          </div>
+                        ):<div style={{fontSize:10,color:T.textSub,marginTop:4}}>Past reactions unavailable</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginBottom:6}}>The week at a glance</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:8}}>
+                {days.map(d=>{
+                  const list=byDay[d.iso]||[];
+                  const isOpen=!!expanded[d.iso];
+                  return(
+                    <div key={d.iso} style={{background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 8px 6px",minWidth:0}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+                        <span style={{fontSize:12,fontWeight:700,color:T.text}}>{d.dow}</span>
+                        <span style={{fontSize:10,color:T.textSub}}>{d.label}</span>
+                      </div>
+                      {list.length===0&&<div style={{fontSize:10,color:T.textSub,padding:"6px 0"}}>No big reports</div>}
+                      {EW_SLOTS.map(([slot,label])=>{
+                        const items=list.filter(e=>ewSlot(e.hour)===slot);
+                        if(!items.length)return null;
+                        const shown=isOpen?items:items.slice(0,5);
+                        return(
+                          <div key={slot||"tbd"} style={{marginBottom:6}}>
+                            <div style={{fontSize:8,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:T.textSub,margin:"6px 0 3px"}}>{label}</div>
+                            {shown.map(e=>{
+                              const mineIt=watchSet.has(e.symbol);
+                              return(
+                                <div key={e.symbol} title={names[e.symbol]||e.symbol} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,padding:"3px 6px",marginBottom:2,borderRadius:6,border:`1px solid ${mineIt?T.accent:"transparent"}`,background:mineIt?T.accentBg:"transparent"}}>
+                                  <span style={{fontSize:11,fontWeight:mineIt?700:600,color:mineIt?T.accent:T.text}}>{e.symbol}</span>
+                                  <span style={{fontSize:9,color:T.textSub,fontVariantNumeric:"tabular-nums"}}>{e.epsEstimate!=null?"est $"+e.epsEstimate.toFixed(2):""}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                      {list.length>5&&(
+                        <button onClick={()=>setExpanded(p=>Object.assign({},p,{[d.iso]:!p[d.iso]}))} style={{width:"100%",padding:"3px 0",border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer",fontFamily:T.sans}}>
+                          {isOpen?"Show fewer":`+ more (${list.length})`}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:9,color:T.textSub,lineHeight:1.5,marginTop:10}}>
+                Shows your tickers, the popular-stock list and any report with an $8B+ revenue estimate. Dates are as companies have scheduled them and can move. "Avg move" is the absolute 1-day price change after each of the last reports. A company can beat estimates and still fall. Educational tool, not financial advice.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
    CHART CONTROLS
 ════════════════════════════════════════════════════ */
 function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
@@ -1621,7 +2443,7 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       <div style={{background:T.surfaceB,border:`1px solid ${T.accent}30`,borderRadius:10,padding:"12px 14px",marginTop:4,animation:"fadeUp 0.12s ease"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <span style={{fontSize:10,fontWeight:700,color:T.textSub,textTransform:"uppercase",letterSpacing:".06em"}}>Indicator Guide</span>
-          <button onClick={()=>setActiveHelp("")} style={{background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
+          <span style={{display:"flex",alignItems:"center",gap:12}}><button onClick={()=>openGlossary(null)} style={{background:"none",border:"none",color:T.accent,cursor:"pointer",fontSize:10,fontFamily:T.sans}}>Full glossary</button><button onClick={()=>setActiveHelp("")} style={{background:"none",border:"none",color:T.textSub,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button></span>
         </div>
         {Object.entries(helpDefs).map(([k,h])=>(
           <div key={k} style={{paddingBottom:7,marginBottom:7,borderBottom:`1px solid ${T.border}`}}>
@@ -1859,7 +2681,7 @@ function MarketHero({T,symbols,news,refreshing}){
 /* ════════════════════════════════════════════════════
    STOCK CARDS
 ════════════════════════════════════════════════════ */
-function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,onSetAlert}){
+function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,onSetAlert,health}){
   const {s,p,pc,loading:ld,failed}=stock;
   const ch=pct(p||0,pc||1);
   const hasAlert=onSetAlert?getAlerts().some(a=>a.symbol===s&&!a.triggered):false;
@@ -1888,13 +2710,14 @@ function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,
           <Sparkline price={p} changePct={ch} T={T} w={undefined} h={24}/>
         </div>
       )}
-      <div style={{marginTop:4}}>
+      <div style={{marginTop:4,display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,flexWrap:"wrap"}}>
         {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
+        {!ld&&!failed&&<HealthBadge h={health} T={T}/>}
       </div>
     </div>
   );
 }
-function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing}){
+function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,health}){
   const {s,p,pc,loading:ld}=stock;
   const ch=pct(p||0,pc||1);
   return(
@@ -1907,6 +2730,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing})
       <div style={{textAlign:"right",minWidth:60}}>
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
       </div>
+      {!ld&&<HealthBadge h={health} T={T}/>}
       {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
       {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}><I.X s={10}/></button>}
     </div>
@@ -2263,7 +3087,7 @@ function StockNews({symbol,T}){
   );
 }
 
-function StockDetail({selected,names,T,onClose,onSetAlert}){
+function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
@@ -2324,6 +3148,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert}){
       {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T}/></div>);})()}
       {/* ── AI Analysis ──────────────────────────────── */}
       {/* ── Stock Insights ────────────────────────────── */}
+      <HealthPanel h={health} loading={healthLoading} T={T}/>
       <YFInsights symbol={selected.s} price={selected.p} T={T}/>
       {/* ── AI Analysis ───────────────────────────────── */}
       <DeepAnalysis symbol={selected.s} T={T}/>
@@ -2439,15 +3264,15 @@ function YahooRecommendations({stocks,T,refreshKey}){
                     {(r.pe||r.beta||r.w52h)&&(
                       <div style={{display:"flex",gap:0,borderTop:`1px solid ${T.border}`,paddingTop:8,flexWrap:"wrap"}}>
                         {r.pe&&<div style={{flex:1,minWidth:60,padding:"0 8px 0 0"}}>
-                          <HelpTip tip={METRIC_HELP.pe?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Fwd P/E ↗</div></HelpTip>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}><HelpTerm k="pe" T={T}>Fwd P/E</HelpTerm></div>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.pe.toFixed(1)}x</div>
                         </div>}
                         {r.beta&&<div style={{flex:1,minWidth:60,padding:"0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <HelpTip tip={METRIC_HELP.beta?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>Beta ↗</div></HelpTip>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}><HelpTerm k="beta" T={T}>Beta</HelpTerm></div>
                           <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:T.mono}}>{r.beta.toFixed(2)}</div>
                         </div>}
                         {r.w52h&&<div style={{flex:2,minWidth:100,padding:"0 0 0 8px",borderLeft:`1px solid ${T.border}`}}>
-                          <HelpTip tip={METRIC_HELP.w52?.tip||""} T={T}><div style={{fontSize:9,color:T.textSub,marginBottom:1,cursor:"help"}}>52W Range ↗</div></HelpTip>
+                          <div style={{fontSize:9,color:T.textSub,marginBottom:1}}><HelpTerm k="w52" T={T}>52W Range</HelpTerm></div>
                           <div style={{fontSize:11,fontWeight:600,fontFamily:T.mono}}><span style={{color:T.down}}>${r.w52l<100?r.w52l?.toFixed(1):Math.round(r.w52l)}</span><span style={{color:T.textSub}}> – </span><span style={{color:T.up}}>${r.w52h<100?r.w52h?.toFixed(1):Math.round(r.w52h)}</span></div>
                         </div>}
                       </div>
@@ -2755,6 +3580,32 @@ export default function StockScreener(){
     return true;
   }),[allStocks,filters]);
 
+  // Health checks (fundamentals) for the stocks in the active tab
+  const [fund,setFund]=useState({});
+  const [fundLoading,setFundLoading]=useState(false);
+  const [glossaryOpen,setGlossaryOpen]=useState(false);
+  const [glossaryFocus,setGlossaryFocus]=useState(null);
+  const tabSymKey=curTab.stocks.map(x=>x.s).join(",");
+  useEffect(()=>{
+    const syms=tabSymKey?tabSymKey.split(","):[];
+    if(!syms.length)return undefined;
+    let dead=false;
+    setFundLoading(true);
+    fetchFundamentals(syms,{onBatch:m=>{if(!dead)setFund(p=>Object.assign({},p,m));}})
+      .catch(()=>{}).finally(()=>{if(!dead)setFundLoading(false);});
+    return()=>{dead=true;};
+  },[tabSymKey]);
+  const healthMap=useMemo(()=>{
+    const o={};
+    Object.keys(fund).forEach(sy=>{o[sy]=computeHealth(fund[sy],SECTOR_OF[sy]);});
+    return o;
+  },[fund]);
+  useEffect(()=>{
+    const h=e=>{setGlossaryFocus(e.detail||null);setGlossaryOpen(true);};
+    window.addEventListener("open-glossary",h);
+    return()=>window.removeEventListener("open-glossary",h);
+  },[]);
+
   const allSymbols=useMemo(()=>[...new Set(tabs.flatMap(t=>t.stocks.map(s=>s.s)))]   ,[tabs]);
 
   // Auto-fetch prices on first load
@@ -2890,7 +3741,7 @@ export default function StockScreener(){
            {stocks.map(st=>(
              <GridCard key={st.s} stock={st} selected={selected?.s===st.s}
                onClick={()=>setSelected(s=>s?.s===st.s?null:st)}
-               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing}
+               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing} health={healthMap[st.s]}
                onSetAlert={()=>setAlertModal({symbol:st.s,price:st.p})}/>
            ))}
          </div>
@@ -2898,7 +3749,7 @@ export default function StockScreener(){
            {stocks.map(st=>(
              <ListRow key={st.s} stock={st} selected={selected?.s===st.s}
                onClick={()=>setSelected(s=>s?.s===st.s?null:st)}
-               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing}/>
+               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing} health={healthMap[st.s]}/>
            ))}
          </div>
       }
@@ -2933,6 +3784,7 @@ export default function StockScreener(){
           <button onClick={()=>setAutoRefresh(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${autoRefresh?T.up:T.border}`,background:autoRefresh?T.upBg:"transparent",color:autoRefresh?T.up:T.textSub,fontSize:11,cursor:"pointer",fontWeight:autoRefresh?600:400}}>
             {autoRefresh?"⏱ Auto ON":"⏱ Auto"}
           </button>
+          <button onClick={()=>openGlossary(null)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>Glossary</button>
           <button onClick={()=>setShowAlertList(true)} title="View Alerts" style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:14,cursor:"pointer"}}><I.Bell s={13}/></button>
           <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${showFilters?T.accent:T.border}`,background:showFilters?`${T.accent}15`:T.surface,color:showFilters?T.accent:T.textSub,fontSize:11,cursor:"pointer",fontWeight:showFilters?700:400,display:"flex",alignItems:"center",gap:5}}><I.Filter s={11}/>Filter{filters.changeMin||filters.changeMax?" ✓":""}</button>
           <button onClick={()=>runRefresh(curTab.stocks)} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
@@ -2951,7 +3803,10 @@ export default function StockScreener(){
       {/* ── DAILY BRIEF ───────────────────────────────── */}
       <DailyBrief indices={indices} stocks={allStocks} news={mktNews} T={T}/>
       {/* ── INTELLIGENCE FEED ─────────────────────── */}
+      <EarningsWeek symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T}/>
       <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
+
+      <PlaybooksPanel T={T} names={names} tabSymbols={curTab.stocks.map(x=>x.s)} onAdd={sym=>addTickerBySymbol(sym)}/>
 
       {/* ── TABS (underline style) ─────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:0,overflowX:"auto",borderBottom:`1px solid ${T.border}`}}>
@@ -3011,13 +3866,13 @@ export default function StockScreener(){
         selected?(
           <div>
             <button onClick={()=>setSelected(null)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:12,cursor:"pointer",marginBottom:12,boxShadow:T.shadow,fontFamily:T.sans}}>← Back</button>
-            <StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})}/>
+            <StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading}/>
           </div>
         ):StockList
       ):(
         <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
           <div style={{width:selected?255:"100%",flexShrink:0,transition:"width 0.18s"}}>{StockList}</div>
-          {selected&&<div style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})}/></div>}
+          {selected&&<div style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading}/></div>}
         </div>
       )}
 
@@ -3030,6 +3885,7 @@ export default function StockScreener(){
 
       {alertModal&&<AlertModal symbol={alertModal.symbol} currentPrice={alertModal.price} T={T} onClose={()=>setAlertModal(null)}/>}
       {showAlertList&&<AlertListModal T={T} onClose={()=>setShowAlertList(false)}/>}
+      {glossaryOpen&&<GlossarySheet T={T} focus={glossaryFocus} onClose={()=>setGlossaryOpen(false)}/>}
     </div>
   );
 }
