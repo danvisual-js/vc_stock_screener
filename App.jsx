@@ -2220,7 +2220,7 @@ function EwChip({label,value,color,T}){
     </div>
   );
 }
-function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
+function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick}){
   const days=useMemo(ewWeekRange,[]);
   const from=days[0].iso,to=days[4].iso;
   const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_ew_open")!=="0";}catch{return true;}});
@@ -2228,7 +2228,8 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
   const [loading,setLoading]=useState(true);
   const [err,setErr]=useState(null);
   const [expanded,setExpanded]=useState({});
-  useEffect(()=>{try{localStorage.setItem("screener_ew_open",open?"1":"0");}catch{}},[open]);
+  const toggleOpen=()=>{const n=!open;setOpen(n);try{localStorage.setItem("screener_ew_open",n?"1":"0");}catch{}};
+  const pick=sym=>{setOpen(false);if(onPick)onPick(sym);};
   const watchKey=symbols.slice().sort().join(",");
   useEffect(()=>{
     let dead=false;
@@ -2301,7 +2302,7 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
   const rangeLabel=days[0].label+" – "+days[4].label;
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,marginBottom:14,boxShadow:T.shadow,overflow:"hidden"}}>
-      <button onClick={()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.sans}}>
+      <button onClick={toggleOpen} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.sans}}>
         <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Earnings This Week</span>
         <span style={{fontSize:11,color:T.textSub,flex:1}}>{rangeLabel}{data?` · ${events.length} reports, ${mine.length} on your watchlists`:""}</span>
         <span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>
@@ -2331,7 +2332,7 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
                     const m=moves[e.symbol];
                     const h=healthMap[e.symbol];
                     return(
-                      <div key={e.symbol} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.accent}55`,background:T.accentBg}}>
+                      <div key={e.symbol} role="button" tabIndex={0} onClick={()=>pick(e.symbol)} onKeyDown={ev=>{if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();pick(e.symbol);}}} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.accent}55`,background:T.accentBg,cursor:"pointer"}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                           <span style={{fontSize:13,fontWeight:700,color:T.text}}>{e.symbol}</span>
                           <span style={{fontSize:10,color:T.textSub,flex:1}}>{dayName(e.date)} · {ewSlotLabel(ewSlot(e.hour))}</span>
@@ -2348,6 +2349,7 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
                             {" · "}up {m.up} of {m.n}
                           </div>
                         ):<div style={{fontSize:10,color:T.textSub,marginTop:4}}>Past reactions unavailable</div>}
+                        <div style={{fontSize:10,color:T.accent,marginTop:6,fontWeight:600}}>View details and analysis →</div>
                       </div>
                     );
                   })}
@@ -2376,7 +2378,7 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
                             {shown.map(e=>{
                               const mineIt=watchSet.has(e.symbol);
                               return(
-                                <div key={e.symbol} title={names[e.symbol]||e.symbol} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,padding:"3px 6px",marginBottom:2,borderRadius:6,border:`1px solid ${mineIt?T.accent:"transparent"}`,background:mineIt?T.accentBg:"transparent"}}>
+                                <div key={e.symbol} title={names[e.symbol]||e.symbol} onClick={mineIt?()=>pick(e.symbol):undefined} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,padding:"3px 6px",marginBottom:2,borderRadius:6,border:`1px solid ${mineIt?T.accent:"transparent"}`,background:mineIt?T.accentBg:"transparent",cursor:mineIt?"pointer":"default"}}>
                                   <span style={{fontSize:11,fontWeight:mineIt?700:600,color:mineIt?T.accent:T.text}}>{e.symbol}</span>
                                   <span style={{fontSize:9,color:T.textSub,fontVariantNumeric:"tabular-nums"}}>{e.epsEstimate!=null?"est $"+e.epsEstimate.toFixed(2):""}</span>
                                 </div>
@@ -2995,7 +2997,7 @@ function YFInsights({symbol,price,T}){
 /* ════════════════════════════════════════════════════
    DEEP ANALYSIS — uses /api/claude directly, no separate deploy needed
 ════════════════════════════════════════════════════ */
-function DeepAnalysis({symbol,T}){
+function DeepAnalysis({symbol,T,autoRun}){
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
@@ -3058,6 +3060,15 @@ Return ONLY valid JSON:
     }catch(e){setError(e.message);}
     finally{setLoading(false);}
   };
+
+  const autoDone=useRef("");
+  useEffect(()=>{
+    if(!autoRun||autoDone.current===symbol)return;
+    autoDone.current=symbol;
+    let cached=false;
+    try{cached=!!localStorage.getItem(CACHE_KEY);}catch{}
+    if(!cached)generate();
+  },[symbol,autoRun]);// eslint-disable-line
 
   const sections=[
     {key:"movement",label:"Why This Stock Moved",color:"#7C6FF7",icon:"◉"},
@@ -3131,7 +3142,7 @@ function StockNews({symbol,T}){
   );
 }
 
-function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading}){
+function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,autoAnalyze}){
   const [tf,setTf]=useState("5m");
   const [chartMode,setChartMode]=useState("candle");
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
@@ -3195,7 +3206,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading})
       <HealthPanel h={health} loading={healthLoading} T={T}/>
       <YFInsights symbol={selected.s} price={selected.p} T={T}/>
       {/* ── AI Analysis ───────────────────────────────── */}
-      <DeepAnalysis symbol={selected.s} T={T}/>
+      <DeepAnalysis key={selected.s} symbol={selected.s} T={T} autoRun={autoAnalyze}/>
     </div>
   );
 }
@@ -3612,6 +3623,7 @@ export default function StockScreener(){
   const curTab=tabs.find(t=>t.id===activeTab)||tabs[0];
   const [earnMap,setEarnMap]=useState({});
   const [earnOnly,setEarnOnly]=useState(false);
+  const [autoSym,setAutoSym]=useState(null);
   const allStocks=useMemo(()=>[...curTab.stocks].sort((a,b)=>{
     const ca=pct(a.p||0,a.pc||1),cb=pct(b.p||0,b.pc||1);
     if(sort==="earn"){
@@ -3766,6 +3778,18 @@ export default function StockScreener(){
     }
   },[activeTab,runRefresh]);
 
+  // Tap a ticker in the earnings panel: switch to its tab, open its details, scroll there, start the analysis
+  const pickSymbol=useCallback(sym=>{
+    const t=tabsRef.current.find(x=>x.stocks.some(s=>s.s===sym));
+    if(!t)return;
+    setActiveTab(t.id);
+    setSelected(t.stocks.find(s=>s.s===sym));
+    setAutoSym(sym);
+    setTimeout(()=>{
+      const el=document.getElementById("stock-detail");
+      if(el&&el.scrollIntoView)el.scrollIntoView({behavior:"smooth",block:"start"});
+    },250);
+  },[]);
   const addTicker=()=>{if(newTicker.trim()){addTickerBySymbol(newTicker);setNewTicker("");}}
 
   const addTab=()=>{
@@ -3857,7 +3881,7 @@ export default function StockScreener(){
       {/* ── DAILY BRIEF ───────────────────────────────── */}
       <DailyBrief indices={indices} stocks={allStocks} news={mktNews} T={T}/>
       {/* ── INTELLIGENCE FEED ─────────────────────── */}
-      <EarningsWeek symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T} onWatch={setEarnMap}/>
+      <EarningsWeek symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T} onWatch={setEarnMap} onPick={pickSymbol}/>
       <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
 
       <PlaybooksPanel T={T} names={names} tabSymbols={curTab.stocks.map(x=>x.s)} onAdd={sym=>addTickerBySymbol(sym)}/>
@@ -3919,15 +3943,15 @@ export default function StockScreener(){
       {/* ── MOBILE or DESKTOP layout ─────────────── */}
       {isMobile?(
         selected?(
-          <div>
+          <div id="stock-detail">
             <button onClick={()=>setSelected(null)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,color:T.textSub,fontSize:12,cursor:"pointer",marginBottom:12,boxShadow:T.shadow,fontFamily:T.sans}}>← Back</button>
-            <StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading}/>
+            <StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading} autoAnalyze={autoSym===selected.s}/>
           </div>
         ):StockList
       ):(
         <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
           <div style={{width:selected?255:"100%",flexShrink:0,transition:"width 0.18s"}}>{StockList}</div>
-          {selected&&<div style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading}/></div>}
+          {selected&&<div id="stock-detail" style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading} autoAnalyze={autoSym===selected.s}/></div>}
         </div>
       )}
 
