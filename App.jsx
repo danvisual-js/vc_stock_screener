@@ -2195,6 +2195,23 @@ const EW_SLOTS=[["bmo","Before the open"],["dmh","During hours"],["amc","After t
 const ewSlot=h=>h==="bmo"||h==="amc"||h==="dmh"?h:"";
 const ewSlotLabel=h=>({bmo:"Before open",amc:"After close",dmh:"During hours"}[h]||"Time not set");
 
+function earnChipText(e){
+  if(!e)return "";
+  const d=new Date(e.date+"T12:00:00");
+  const t=new Date();
+  const same=d.getFullYear()===t.getFullYear()&&d.getMonth()===t.getMonth()&&d.getDate()===t.getDate();
+  const day=same?"today":d.toLocaleString("en-US",{weekday:"short"});
+  const slot={bmo:"before open",amc:"after close",dmh:"during hours"}[e.hour]||"";
+  return "Earnings "+day+(slot?" · "+slot:"");
+}
+function EarnChip({e,T}){
+  if(!e)return null;
+  return(
+    <span title="Reports earnings this week" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:10,background:"#F59E0B18",border:"1px solid #F59E0B50",color:"#F59E0B",fontSize:9,fontWeight:700,letterSpacing:".03em",whiteSpace:"nowrap",fontFamily:T.sans}}>
+      {earnChipText(e)}
+    </span>
+  );
+}
 function EwChip({label,value,color,T}){
   return(
     <div style={{padding:"6px 12px",borderRadius:10,background:T.surfaceB,border:`1px solid ${T.border}`,minWidth:84}}>
@@ -2203,7 +2220,7 @@ function EwChip({label,value,color,T}){
     </div>
   );
 }
-function EarningsWeek({symbols,stocks,healthMap,names,T}){
+function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch}){
   const days=useMemo(ewWeekRange,[]);
   const from=days[0].iso,to=days[4].iso;
   const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_ew_open")!=="0";}catch{return true;}});
@@ -2215,33 +2232,57 @@ function EarningsWeek({symbols,stocks,healthMap,names,T}){
   const watchKey=symbols.slice().sort().join(",");
   useEffect(()=>{
     let dead=false;
-    const ck="screener_ew_v1_"+from;
+    const ck="screener_ew_v2_"+from;
     try{
       const c=JSON.parse(localStorage.getItem(ck)||"null");
       if(c&&c.key===watchKey&&Date.now()-c.t<3*3600e3&&c.data){setData(c.data);setLoading(false);return undefined;}
     }catch{}
     setLoading(true);setErr(null);
+    const jsonFetch=async url=>{
+      const r=await fetch(url,{signal:AbortSignal.timeout(25000)});
+      if(!r.ok||(r.headers.get("content-type")||"").indexOf("json")<0)throw new Error("HTTP "+r.status);
+      return r.json();
+    };
     const keep=[...new Set([...symbols,...POPULAR_50])].join(",");
-    fetch(`/api/earnings-week?from=${from}&to=${to}&symbols=${encodeURIComponent(keep)}&watch=${encodeURIComponent(symbols.slice(0,10).join(","))}`,{signal:AbortSignal.timeout(25000)})
-      .then(r=>{
-        if(!r.ok||(r.headers.get("content-type")||"").indexOf("json")<0)throw new Error("Earnings calendar unavailable");
-        return r.json();
+    const MON={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    jsonFetch(`/api/earnings-week?from=${from}&to=${to}&symbols=${encodeURIComponent(keep)}&watch=${encodeURIComponent(symbols.slice(0,10).join(","))}`)
+      .then(j=>{if(j.error)throw new Error(j.error);return j;})
+      .catch(async e1=>{
+        // Fallback: the older /api/events endpoint (watchlist tickers only)
+        const live=await jsonFetch(`/api/events?symbols=${encodeURIComponent(symbols.join(","))}`);
+        if(!Array.isArray(live))throw e1;
+        const yr=new Date().getFullYear();
+        const ev=[];
+        live.forEach(x=>{
+          const p=String(x.date||"").split(" ");
+          const mi=MON[(p[0]||"").slice(0,3).toLowerCase()];
+          const dd=parseInt(p[1],10);
+          if(mi==null||!dd)return;
+          const iso=`${yr}-${String(mi+1).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
+          ev.push({symbol:x.s,date:iso,hour:x.when==="AMC"?"amc":x.when==="BMO"?"bmo":"",epsEstimate:x.epsEst!=null?x.epsEst:null,revenueEstimate:x.revEst!=null?x.revEst*1e9:null});
+        });
+        return {events:ev,moves:{},fallback:true,reason:e1.message};
       })
       .then(j=>{
         if(dead)return;
-        if(j.error)throw new Error(j.error);
         setData(j);
-        try{localStorage.setItem(ck,JSON.stringify({key:watchKey,t:Date.now(),data:j}));}catch{}
+        if(!j.fallback){try{localStorage.setItem(ck,JSON.stringify({key:watchKey,t:Date.now(),data:j}));}catch{}}
       })
-      .catch(e=>{if(!dead)setErr(e.message||"Earnings calendar unavailable");})
+      .catch(e=>{if(!dead)setErr("Earnings calendar unavailable ("+(e.message||"error")+")");})
       .finally(()=>{if(!dead)setLoading(false);});
     return()=>{dead=true;};
   },[watchKey,from]);// eslint-disable-line
 
   const watchSet=useMemo(()=>new Set(symbols),[watchKey]);// eslint-disable-line
-  const events=data&&data.events?data.events:[];
+  const events=(data&&data.events?data.events:[]).filter(e=>e.date>=from&&e.date<=to);
   const moves=data&&data.moves?data.moves:{};
   const mine=events.filter(e=>watchSet.has(e.symbol));
+  useEffect(()=>{
+    if(!onWatch||!data)return;
+    const o={};
+    mine.forEach(e=>{o[e.symbol]={date:e.date,hour:ewSlot(e.hour)};});
+    onWatch(o);
+  },[data]);// eslint-disable-line
   const byDay=useMemo(()=>{
     const o={};
     days.forEach(d=>{o[d.iso]=[];});
@@ -2277,7 +2318,8 @@ function EarningsWeek({symbols,stocks,healthMap,names,T}){
           </div>
 
           {loading&&<div style={{fontSize:11,color:T.textSub,animation:"pulse 1.2s infinite",padding:"6px 0"}}>Loading this week's earnings…</div>}
-          {!loading&&err&&<div style={{fontSize:11,color:T.textSub,padding:"6px 0"}}>{err}. Make sure api/earnings-week.js is deployed and FINNHUB_API_KEY is set.</div>}
+          {!loading&&err&&<div style={{fontSize:11,color:T.textSub,padding:"6px 0",lineHeight:1.5}}>{err}. Check that the api folder is deployed and FINNHUB_API_KEY is set in Vercel.</div>}
+          {!loading&&!err&&data&&data.fallback&&<div style={{fontSize:10,color:T.textSub,padding:"0 0 8px",lineHeight:1.5}}>Showing your watchlist tickers only: the market-wide calendar (api/earnings-week) returned {data.reason}. Deploy that file to see all big reports.</div>}
 
           {!loading&&!err&&(
             <div>
@@ -2681,7 +2723,7 @@ function MarketHero({T,symbols,news,refreshing}){
 /* ════════════════════════════════════════════════════
    STOCK CARDS
 ════════════════════════════════════════════════════ */
-function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,onSetAlert,health}){
+function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,onSetAlert,health,earn}){
   const {s,p,pc,loading:ld,failed}=stock;
   const ch=pct(p||0,pc||1);
   const hasAlert=onSetAlert?getAlerts().some(a=>a.symbol===s&&!a.triggered):false;
@@ -2714,10 +2756,11 @@ function GridCard({stock,selected,onClick,removable,onRemove,names,T,refreshing,
         {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
         {!ld&&!failed&&<HealthBadge h={health} T={T}/>}
       </div>
+      {earn&&<div style={{marginTop:5}}><EarnChip e={earn} T={T}/></div>}
     </div>
   );
 }
-function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,health}){
+function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,health,earn}){
   const {s,p,pc,loading:ld}=stock;
   const ch=pct(p||0,pc||1);
   return(
@@ -2730,6 +2773,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,h
       <div style={{textAlign:"right",minWidth:60}}>
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
       </div>
+      {earn&&<EarnChip e={earn} T={T}/>}
       {!ld&&<HealthBadge h={health} T={T}/>}
       {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
       {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}><I.X s={10}/></button>}
@@ -3566,19 +3610,29 @@ export default function StockScreener(){
   },[autoRefresh,activeTab]);
 
   const curTab=tabs.find(t=>t.id===activeTab)||tabs[0];
+  const [earnMap,setEarnMap]=useState({});
+  const [earnOnly,setEarnOnly]=useState(false);
   const allStocks=useMemo(()=>[...curTab.stocks].sort((a,b)=>{
     const ca=pct(a.p||0,a.pc||1),cb=pct(b.p||0,b.pc||1);
+    if(sort==="earn"){
+      const ea=earnMap[a.s],eb=earnMap[b.s];
+      if(ea&&eb)return ea.date<eb.date?-1:ea.date>eb.date?1:cb-ca;
+      if(ea)return -1;
+      if(eb)return 1;
+      return cb-ca;
+    }
     if(sort==="change_desc")return cb-ca;
     if(sort==="change_asc") return ca-cb;
     return a.s.localeCompare(b.s);
-  }),[curTab,sort]);
+  }),[curTab,sort,earnMap]);
   const stocks=useMemo(()=>allStocks.filter(s=>{
+    if(earnOnly&&!earnMap[s.s])return false;
     if(!s.p||!s.pc)return true;
     const ch=pct(s.p,s.pc);
     if(filters.changeMin!=null&&ch<filters.changeMin)return false;
     if(filters.changeMax!=null&&ch>filters.changeMax)return false;
     return true;
-  }),[allStocks,filters]);
+  }),[allStocks,filters,earnOnly,earnMap]);
 
   // Health checks (fundamentals) for the stocks in the active tab
   const [fund,setFund]=useState({});
@@ -3741,7 +3795,7 @@ export default function StockScreener(){
            {stocks.map(st=>(
              <GridCard key={st.s} stock={st} selected={selected?.s===st.s}
                onClick={()=>setSelected(s=>s?.s===st.s?null:st)}
-               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing} health={healthMap[st.s]}
+               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing} health={healthMap[st.s]} earn={earnMap[st.s]}
                onSetAlert={()=>setAlertModal({symbol:st.s,price:st.p})}/>
            ))}
          </div>
@@ -3749,7 +3803,7 @@ export default function StockScreener(){
            {stocks.map(st=>(
              <ListRow key={st.s} stock={st} selected={selected?.s===st.s}
                onClick={()=>setSelected(s=>s?.s===st.s?null:st)}
-               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing} health={healthMap[st.s]}/>
+               removable={true} onRemove={()=>removeTicker(st.s)} names={names} T={T} refreshing={refreshing} health={healthMap[st.s]} earn={earnMap[st.s]}/>
            ))}
          </div>
       }
@@ -3803,7 +3857,7 @@ export default function StockScreener(){
       {/* ── DAILY BRIEF ───────────────────────────────── */}
       <DailyBrief indices={indices} stocks={allStocks} news={mktNews} T={T}/>
       {/* ── INTELLIGENCE FEED ─────────────────────── */}
-      <EarningsWeek symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T}/>
+      <EarningsWeek symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T} onWatch={setEarnMap}/>
       <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
 
       <PlaybooksPanel T={T} names={names} tabSymbols={curTab.stocks.map(x=>x.s)} onAdd={sym=>addTickerBySymbol(sym)}/>
@@ -3849,9 +3903,10 @@ export default function StockScreener(){
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:10,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.05em",fontFamily:T.sans}}>Sort</span>
-          {[["change_desc","▲ Top",T.up],["change_asc","▼ Worst",T.down],["az","A–Z",T.accent]].map(([k,l,c])=>(
+          {[["change_desc","▲ Top",T.up],["change_asc","▼ Worst",T.down],["earn","Earnings","#F59E0B"],["az","A–Z",T.accent]].map(([k,l,c])=>(
             <button key={k} onClick={()=>setSort(k)} style={{padding:"4px 9px",borderRadius:6,border:`1px solid ${sort===k?c:T.border}`,background:sort===k?`${c}15`:"transparent",color:sort===k?c:T.textSub,fontSize:10,cursor:"pointer",fontWeight:sort===k?600:400,fontFamily:T.sans}}>{l}</button>
           ))}
+          <button onClick={()=>setEarnOnly(v=>!v)} style={{padding:"4px 9px",borderRadius:6,border:`1px solid ${earnOnly?"#F59E0B":T.border}`,background:earnOnly?"#F59E0B15":"transparent",color:earnOnly?"#F59E0B":T.textSub,fontSize:10,cursor:"pointer",fontWeight:earnOnly?600:400,fontFamily:T.sans}}>Reporting this week{Object.keys(earnMap).length?` (${curTab.stocks.filter(x=>earnMap[x.s]).length})`:""}</button>
           <div style={{width:1,height:12,background:T.border}}/>
           <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:7,display:"flex",overflow:"hidden",boxShadow:T.shadow}}>
             {[["grid",<I.Grid s={12}/>],["list",<I.List s={12}/>]].map(([v,ic])=>(
