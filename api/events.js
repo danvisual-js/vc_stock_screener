@@ -2,7 +2,11 @@
  * api/events.js — Live earnings calendar + EPS/revenue estimates via Finnhub
  * Usage: /api/events?symbols=AAPL,MSFT,NVDA
  */
+const earningsHistory = require("./_earnings");
+
 module.exports = async function handler(req, res) {
+  // /api/events?kind=history&symbol=AAPL  -> per-stock earnings history (was /api/earnings; merged to stay within 12 functions)
+  if (/[?&]kind=history\b/.test(req.url || "")) return earningsHistory(req, res);
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "public, s-maxage=3600, stale-while-revalidate=7200");
 

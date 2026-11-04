@@ -12,6 +12,7 @@
  */
 const crypto = require("crypto");
 const db = require("./_db");
+const waitlist = require("./_waitlist");
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const idOf = (email) => crypto.createHash("sha256").update(email).digest("hex").slice(0, 24);
@@ -54,10 +55,10 @@ async function sendMail(to, subject, html) {
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  // beta signup shares this function (POST /api/subscribe?kind=beta) to stay within the 12-function Hobby limit
+  if (/[?&]kind=beta\b/.test(req.url || "")) return waitlist(req, res);
+  const corsOk = require("./_access").cors(req, res, "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(corsOk ? 200 : 403).end();
 
   const base = baseUrl(req);
   const q = new URL(req.url, "http://x").searchParams;
