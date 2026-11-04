@@ -693,14 +693,14 @@ async function fetchYFQuotes(symbols){
   if(!symbols.length)return{};
   try{
     const r=await fetch("/api/quotes?symbols="+encodeURIComponent(symbols.join(",")),{
-      signal:AbortSignal.timeout(12000),
+      signal:AbortSignal.timeout(15000),
     });
     if(!r.ok)return{};
     const data=await r.json();
     if(!data||data.error)return{};
     const result={};
     Object.entries(data).forEach(([sym,q])=>{
-      if(q&&q.p>0)result[sym]={p:q.p,pc:q.pc||q.p,name:q.name||sym};
+      if(q&&q.p>0)result[sym]={p:q.p,pc:q.pc||q.p,name:q.name||sym,t:q.t||null,stale:!!q.stale};
     });
     return result;
   }catch{return{};}
@@ -4005,7 +4005,7 @@ const ACCENTS={
   blue:{n:"Blue",d:["#6BA3F5","#071A33"],l:["#2A56B0","#FFFFFF"]},
   rose:{n:"Rose",d:["#F28BA8","#2A0A14"],l:["#B4304F","#FFFFFF"]},
 };
-const DEFAULT_PREFS={mode:"dark",accent:"purple",shade:0,contrast:0,text:100,motion:1,refresh:15,start:"last",ccDetail:"standard"};
+const DEFAULT_PREFS={mode:"dark",accent:"purple",shade:0,contrast:0,text:100,motion:1,refresh:30,start:"last",ccDetail:"standard"};
 function loadPrefs(){
   let o={};
   try{o=JSON.parse(localStorage.getItem("screener_prefs")||"{}")||{};}catch{}
@@ -4241,8 +4241,10 @@ export default function StockScreener(){
   const [addingTab,setAddingTab]=useState(false);
   const [refreshing,setRefreshing]=useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [autoRefresh,setAutoRefresh]=useState(false);
+  const [autoRefresh,setAutoRefresh]=useState(()=>{try{const v=localStorage.getItem("screener_auto");return v===null?true:v==="1";}catch{return true;}});
+  useEffect(()=>{try{localStorage.setItem("screener_auto",autoRefresh?"1":"0");}catch{}},[autoRefresh]);
   const [lastRefresh,setLastRefresh]=useState(null);
+  const [priceHealth,setPriceHealth]=useState({ok:true,got:0,want:0,stale:0});
   const autoRef=useRef(null);
 
   useEffect(()=>{
@@ -4259,9 +4261,16 @@ export default function StockScreener(){
 
   useEffect(()=>{
     if(autoRef.current)clearInterval(autoRef.current);
-    if(autoRefresh){autoRef.current=setInterval(()=>runRefresh(curTab.stocks),(prefs.refresh||15)*1000);}
+    if(autoRefresh){autoRef.current=setInterval(()=>{if(typeof document==='undefined'||!document.hidden)runRefresh(curTab.stocks);},(prefs.refresh||30)*1000);}
     return()=>{ if(autoRef.current)clearInterval(autoRef.current); };
   },[autoRefresh,activeTab,prefs.refresh]);
+
+  // refresh right away when the tab becomes visible again (timers are throttled in background tabs)
+  useEffect(()=>{
+    const f=()=>{if(!document.hidden&&autoRefresh)runRefresh(tabsRef.current[0].stocks);};
+    document.addEventListener("visibilitychange",f);
+    return()=>document.removeEventListener("visibilitychange",f);
+  },[autoRefresh]);// eslint-disable-line
 
   const curTab=tabs.find(t=>t.id===activeTab)||tabs[0];
   const [earnMap,setEarnMap]=useState({});
@@ -4381,8 +4390,10 @@ export default function StockScreener(){
       }
     }).catch(()=>{});
 
+    const gotN=allSyms.filter(x=>priceMap[x]&&priceMap[x].p>0).length;
+    setPriceHealth({ok:gotN>0,got:gotN,want:allSyms.length,stale:allSyms.filter(x=>priceMap[x]&&priceMap[x].stale).length});
     checkAndFireAlerts(curTab.stocks);
-    setLastRefresh(new Date());
+    if(gotN>0)setLastRefresh(new Date());
     setRefreshKey(k=>k+1);
     setRefreshing(false);
   },[activeTab]); // tabs accessed via tabsRef — always current, no dep needed
@@ -4445,7 +4456,7 @@ export default function StockScreener(){
   const removeTab=id=>{setTabs(p=>p.filter(t=>t.id!==id));if(activeTab===id)setActiveTab(tabs[0].id);};
   const removeTicker=sym=>{setTabs(p=>p.map(t=>t.id===activeTab?{...t,stocks:t.stocks.filter(s=>s.s!==sym)}:t));if(selected?.s===sym)setSelected(null);};
 
-  const timeSince=lastRefresh?`Updated ${lastRefresh.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}`:"";
+  const timeSince=lastRefresh?`Prices ${lastRefresh.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",second:"2-digit",hour12:true})}${priceHealth.got<priceHealth.want?` · ${priceHealth.got}/${priceHealth.want} loaded`:""}${priceHealth.stale?" · some delayed":""}`:(priceHealth.ok?"":"Prices unavailable");
 
   const StockList=(
     <div style={{maxHeight:isMobile?"none":"62vh",overflowY:"auto",paddingRight:isMobile?0:12,scrollbarGutter:isMobile?"auto":"stable"}}>
