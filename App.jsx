@@ -4,6 +4,26 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Brush
 } from "recharts";
 
+/* Desktop / mobile builds load the UI from local files, so relative /api calls need the server's address.
+   window.__API_BASE__ comes from public/config.js (empty for the normal web build, so nothing changes there). */
+const DONATE_URL="https://buymeacoffee.com/YOUR_NAME"; // set to your Ko-fi / Buy Me a Coffee / GitHub Sponsors link
+const LANDER_URL="/welcome/";
+(function(){
+  try{
+    if(typeof window==="undefined"||window.__apiPatched)return;
+    window.__apiPatched=true;
+    const base=String(window.__API_BASE__||"").replace(/\/$/,"");
+    const orig=window.fetch.bind(window);
+    window.fetch=(input,init)=>{
+      if(typeof input!=="string"||input.indexOf("/api/")!==0)return orig(input,init);
+      let code="";try{code=localStorage.getItem("screener_code")||"";}catch{}
+      const i=Object.assign({},init||{});
+      if(code)i.headers=Object.assign({},i.headers||{},{"X-Access-Code":code});
+      return orig(base+input,i);
+    };
+  }catch{}
+})();
+
 /* ════════════════════════════════════════════════════
    NAMES
 ════════════════════════════════════════════════════ */
@@ -313,7 +333,7 @@ Write 3 concise bullets: (1) overall market direction with specific %, (2) stand
 
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:10,boxShadow:T.shadow}}>
-      <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,#6366F112,#7C6FF708)`}}>
+      <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:T.surfaceB}}>
         <span style={{fontSize:11,fontWeight:700,color:T.text,display:"flex",alignItems:"center",gap:6}}>
           <span style={{color:T.accent}}>✦</span> Daily Market Brief
           <span style={{fontSize:9,color:T.textSub,fontWeight:400}}>
@@ -337,7 +357,7 @@ Write 3 concise bullets: (1) overall market direction with specific %, (2) stand
               AI-written summary of your watchlist and market conditions.<br/>
               <span style={{fontSize:9}}>Requires Anthropic API credits · Cached until midnight</span>
             </div>
-            <button onClick={generate} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",background:`linear-gradient(135deg,#6366F1,#7C6FF7)`,color:"#fff",fontSize:12,fontWeight:700,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
+            <button onClick={generate} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",background:T.accent,color:T.accentInk,fontSize:12,fontWeight:700}}>
               ✦ Generate Today's Brief
             </button>
           </div>
@@ -456,46 +476,35 @@ function IntelligenceFeed({stocks,news,symbols,T}){
    THEMES — Yahoo Finance / iOS Finance aesthetic
 ════════════════════════════════════════════════════ */
 const DARK = {
-  // Dark grey base — subtle indigo/purple accent only (not purple background)
-  bg:        "#08090E",   // near-black (same as V2 proposal)
-  surface:   "#0F1018",   // dark blue-grey card
-  surfaceB:  "#161820",   // slightly raised surface
-  border:    "#1E2334",   // dark blue-grey border
-  // Accent: indigo/purple for interactive elements only
-  accent:    "#6366F1",   // indigo — tabs, active states, CTAs
-  up:        "#00D084",   down:"#FF4560",
-  text:      "#F1F5F9",   textSub:"#64748B",  textTert:"#1E293B",
-  mono:      "'SF Mono','Fira Code','Consolas',monospace",
-  sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
-  ema9:      "#F59E0B",   ema20:"#60A5FA",  ema50:"#C084FC",
-  chartGrid: "#1A1D2E",
-  insightBg:"#0F1018",insightBorder:"#1E2334",insightText:"#6366F1",
-  upBg:"#00D08420",downBg:"#FF456020",accentBg:"#6366F118",
-  shadow:    "0 2px 8px rgba(0,0,0,0.5)",
-  // Subtle purple glow on selected card — the only purple touch
-  accentGlow:"0 0 0 1.5px #6366F170, 0 4px 16px rgba(99,102,241,0.2)",
-  headerGrad:"linear-gradient(180deg,#0E1028 0%,#08090E 100%)",
+  // Job-tracker look: deep green-black surfaces, teal accent, flat bordered cards
+  bg:"#0C1311", surface:"#141C19", surfaceB:"#1A2420", border:"#26332E",
+  accent:"#4CC3A7", accentInk:"#06201A",
+  up:"#5CCB8A", down:"#F0877F", warn:"#E7B15A",
+  text:"#E4ECE8", textSub:"#8FA19A", textTert:"#3A4A44",
+  display:   "'Bricolage Grotesque','Avenir Next','Segoe UI',system-ui,sans-serif",
+  mono:      "'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace",
+  sans:      "'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif",
+  ema9:"#E7B15A", ema20:"#8DB0F2", ema50:"#C9A7F0",
+  chartGrid:"#1E2925",
+  insightBg:"#141C19", insightBorder:"#26332E", insightText:"#4CC3A7",
+  upBg:"#163524", downBg:"#41201D", accentBg:"#143B32",
+  shadow:"none", accentGlow:"0 0 0 1px #4CC3A7",
+  headerGrad:"#0C1311",
 };
 const LIGHT = {
-  // Discord-inspired: layered grey backgrounds, no harsh white
-  bg:        "#F2F3F5",   // Discord server background (grey-100)
-  surface:   "#FFFFFF",   // card surface white for contrast against bg
-  surfaceB:  "#EBEDEF",   // Discord channel list / raised surface (grey-200)
-  border:    "#D4D7DC",   // Discord separator
-  accent:    "#5865F2",   // Discord blurple
-  up:        "#2D7D46",   down:"#DA3633",
-  text:      "#060607",   // Discord near-black
-  textSub:   "#4E5058",   // Discord muted / secondary
-  textTert:  "#B5BAC1",   // Discord deselected / placeholder
-  mono:      "'SF Mono','Fira Code','Consolas',monospace",
-  sans:      "-apple-system,'SF Pro Display','Helvetica Neue',Inter,sans-serif",
-  ema9:      "#D97706",   ema20:"#2563EB",  ema50:"#7C3AED",
-  chartGrid: "#EBEDEF",
-  insightBg:"#FFFFFF",insightBorder:"#D4D7DC",insightText:"#5865F2",
-  upBg:"#2D7D4615",downBg:"#DA363315",accentBg:"#5865F215",
-  shadow:    "0 1px 3px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.06)",
-  accentGlow:"0 0 0 1.5px #5865F260",
-  headerGrad:"linear-gradient(180deg,#E9EAEC 0%,#F2F3F5 100%)",
+  bg:"#EEF2F0", surface:"#FFFFFF", surfaceB:"#F5F8F6", border:"#D5DDD9",
+  accent:"#0E6655", accentInk:"#FFFFFF",
+  up:"#1C7A47", down:"#A8312A", warn:"#9A5B00",
+  text:"#14201C", textSub:"#586862", textTert:"#9AA8A2",
+  display:   "'Bricolage Grotesque','Avenir Next','Segoe UI',system-ui,sans-serif",
+  mono:      "'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace",
+  sans:      "'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif",
+  ema9:"#9A5B00", ema20:"#2A56B0", ema50:"#7C4DBA",
+  chartGrid:"#E3EAE7",
+  insightBg:"#FFFFFF", insightBorder:"#D5DDD9", insightText:"#0E6655",
+  upBg:"#DDF0E4", downBg:"#F8DEDB", accentBg:"#DCEFE9",
+  shadow:"none", accentGlow:"0 0 0 1px #0E6655",
+  headerGrad:"#EEF2F0",
 };
 
 /* ════════════════════════════════════════════════════
@@ -2096,8 +2105,9 @@ function PlaybookRow({row,names,T,inList,onAdd}){
     </div>
   );
 }
-function PlaybooksPanel({T,names,tabSymbols,onAdd}){
+function PlaybooksPanel({T,names,tabSymbols,onAdd,embedded}){
   const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_pb_open")==="1";}catch{return false;}});
+  const Head=embedded?"div":"button";
   const [pbId,setPbId]=useState(null);
   const [uni,setUni]=useState({});
   const [loading,setLoading]=useState(false);
@@ -2116,12 +2126,12 @@ function PlaybooksPanel({T,names,tabSymbols,onAdd}){
   const scanned=Object.keys(uni).length;
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,marginBottom:14,boxShadow:T.shadow,overflow:"hidden"}}>
-      <button onClick={()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.sans}}>
+      <Head onClick={embedded?undefined:()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:embedded?"default":"pointer",textAlign:"left",fontFamily:T.sans}}>
         <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Trader Playbooks</span>
         <span style={{fontSize:11,color:T.textSub,flex:1}}>Ready-made scans of 50 popular stocks. No filters to build.</span>
-        <span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>
-      </button>
-      {open&&(
+        {!embedded&&<span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>}
+      </Head>
+      {(embedded||open)&&(
         <div style={{borderTop:`1px solid ${T.border}`}}>
           <div style={{display:"flex",gap:8,padding:"12px 12px 4px",flexWrap:"wrap"}}>
             {PLAYBOOKS.map(p=>{
@@ -2178,6 +2188,7 @@ function PlaybooksPanel({T,names,tabSymbols,onAdd}){
 /* ════════════════════════════════════════════════════
    EARNINGS THIS WEEK — Mon-Fri calendar + watchlist snapshot
 ════════════════════════════════════════════════════ */
+function ewToday(){const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function ewWeekRange(){
   const now=new Date();
   const dow=now.getDay(); // 0 Sun .. 6 Sat (local)
@@ -2220,16 +2231,69 @@ function EwChip({label,value,color,T}){
     </div>
   );
 }
-function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick}){
+function EwBox({e,m,h,mine,name,T,onPick,onAdd}){
+  const slotLbl=ewSlotLabel(ewSlot(e.hour));
+  return(
+    <div role={mine?"button":undefined} tabIndex={mine?0:undefined} onClick={mine?()=>onPick(e.symbol):undefined} onKeyDown={mine?ev=>{if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();onPick(e.symbol);}}:undefined}
+      style={{padding:"9px 10px",borderRadius:8,border:`1px solid ${mine?T.accent:T.border}`,background:mine?T.accentBg:T.surface,cursor:mine?"pointer":"default",minWidth:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        <span style={{fontFamily:T.mono,fontSize:14,fontWeight:600,color:mine?T.accent:T.text,letterSpacing:"-.01em"}}>{e.symbol}</span>
+        <span style={{flex:1}}/>
+        {mine&&<HealthBadge h={h} T={T}/>}
+      </div>
+      <div style={{fontSize:11,color:T.textSub,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{name||" "}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:8}}>
+        <div style={{borderLeft:`2px solid ${T.border}`,paddingLeft:7}}>
+          <div style={{fontSize:9,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase",color:T.textSub}}>EPS est.</div>
+          <div style={{fontFamily:T.mono,fontSize:12,color:T.text,fontVariantNumeric:"tabular-nums"}}>{e.epsEstimate!=null?"$"+e.epsEstimate.toFixed(2):"n/a"}</div>
+        </div>
+        <div style={{borderLeft:`2px solid ${T.border}`,paddingLeft:7}}>
+          <div style={{fontSize:9,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase",color:T.textSub}}>Revenue est.</div>
+          <div style={{fontFamily:T.mono,fontSize:12,color:T.text,fontVariantNumeric:"tabular-nums"}}>{e.revenueEstimate!=null?fmtMoney(e.revenueEstimate):"n/a"}</div>
+        </div>
+      </div>
+      {m&&(
+        <div style={{fontSize:10,color:T.textSub,marginTop:7,lineHeight:1.5}}>
+          Typical move <b style={{fontFamily:T.mono,color:T.text}}>±{m.avgAbsPct.toFixed(1)}%</b>
+          {" · last "}<b style={{fontFamily:T.mono,color:m.lastPct>=0?T.up:T.down}}>{m.lastPct>=0?"+":""}{m.lastPct.toFixed(1)}%</b>
+          {" · up "}{m.up}/{m.n}
+        </div>
+      )}
+      <div style={{display:"flex",alignItems:"center",marginTop:7,fontSize:10}}>
+        <span style={{color:T.textSub}}>{slotLbl}</span>
+        <span style={{flex:1}}/>
+        {mine&&<span style={{color:T.accent,fontWeight:600}}>Details →</span>}
+        {!mine&&onAdd&&<button onClick={ev=>{ev.stopPropagation();onAdd(e.symbol);}} style={{padding:"2px 8px",borderRadius:4,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.sans}}>+ Watch</button>}
+      </div>
+    </div>
+  );
+}
+function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick,onAdd,embedded}){
   const days=useMemo(ewWeekRange,[]);
   const from=days[0].iso,to=days[4].iso;
   const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_ew_open")!=="0";}catch{return true;}});
+  const Head=embedded?"div":"button";
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
   const [err,setErr]=useState(null);
   const [expanded,setExpanded]=useState({});
+  const [scope,setScope]=useState("all");
+  const railRef=useRef(null);
+  const todayRef=useRef(null);
+  const scrolledRef=useRef(false);
+  useEffect(()=>{
+    const r=railRef.current;
+    if(!r||typeof ResizeObserver==="undefined")return undefined;
+    const ro=new ResizeObserver(()=>{
+      if(scrolledRef.current||!r.clientWidth||!todayRef.current)return;
+      scrolledRef.current=true;
+      r.scrollLeft=Math.max(0,todayRef.current.offsetLeft-r.offsetLeft-4);
+    });
+    ro.observe(r);
+    return()=>ro.disconnect();
+  });
   const toggleOpen=()=>{const n=!open;setOpen(n);try{localStorage.setItem("screener_ew_open",n?"1":"0");}catch{}};
-  const pick=sym=>{setOpen(false);if(onPick)onPick(sym);};
+  const pick=sym=>{if(!embedded)setOpen(false);if(onPick)onPick(sym);};
   const watchKey=symbols.slice().sort().join(",");
   useEffect(()=>{
     let dead=false;
@@ -2302,12 +2366,12 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick}){
   const rangeLabel=days[0].label+" – "+days[4].label;
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,marginBottom:14,boxShadow:T.shadow,overflow:"hidden"}}>
-      <button onClick={toggleOpen} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.sans}}>
+      <Head onClick={embedded?undefined:toggleOpen} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:embedded?"default":"pointer",textAlign:"left",fontFamily:T.sans}}>
         <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Earnings This Week</span>
         <span style={{fontSize:11,color:T.textSub,flex:1}}>{rangeLabel}{data?` · ${events.length} reports, ${mine.length} on your watchlists`:""}</span>
-        <span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>
-      </button>
-      {open&&(
+        {!embedded&&<span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>}
+      </Head>
+      {(embedded||open)&&(
         <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 14px 14px"}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
             <EwChip label="Stocks in this list" value={stocks.length} T={T}/>
@@ -2324,80 +2388,52 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick}){
 
           {!loading&&!err&&(
             <div>
-              <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginBottom:6}}>Your watchlists</div>
-              {mine.length===0&&<div style={{fontSize:11,color:T.textSub,marginBottom:12}}>None of your {symbols.length} tickers report this week.</div>}
-              {mine.length>0&&(
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:8,marginBottom:14}}>
-                  {mine.slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0).map(e=>{
-                    const m=moves[e.symbol];
-                    const h=healthMap[e.symbol];
-                    return(
-                      <div key={e.symbol} role="button" tabIndex={0} onClick={()=>pick(e.symbol)} onKeyDown={ev=>{if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();pick(e.symbol);}}} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.accent}55`,background:T.accentBg,cursor:"pointer"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <span style={{fontSize:13,fontWeight:700,color:T.text}}>{e.symbol}</span>
-                          <span style={{fontSize:10,color:T.textSub,flex:1}}>{dayName(e.date)} · {ewSlotLabel(ewSlot(e.hour))}</span>
-                          <HealthBadge h={h} T={T}/>
-                        </div>
-                        <div style={{fontSize:11,color:T.text,marginTop:6,fontVariantNumeric:"tabular-nums"}}>
-                          {e.epsEstimate!=null?<span>EPS est. ${e.epsEstimate.toFixed(2)}</span>:<span style={{color:T.textSub}}>No EPS estimate</span>}
-                          {e.revenueEstimate!=null&&<span style={{color:T.textSub}}> · Rev. {fmtMoney(e.revenueEstimate)}</span>}
-                        </div>
-                        {m?(
-                          <div style={{fontSize:10,color:T.textSub,marginTop:4,lineHeight:1.5}}>
-                            Avg move after last {m.n} reports <b style={{color:T.text}}>±{m.avgAbsPct.toFixed(1)}%</b>
-                            {" · "}last <b style={{color:m.lastPct>=0?T.up:T.down}}>{m.lastPct>=0?"+":""}{m.lastPct.toFixed(1)}%</b>
-                            {" · "}up {m.up} of {m.n}
-                          </div>
-                        ):<div style={{fontSize:10,color:T.textSub,marginTop:4}}>Past reactions unavailable</div>}
-                        <div style={{fontSize:10,color:T.accent,marginTop:6,fontWeight:600}}>View details and analysis →</div>
-                      </div>
-                    );
-                  })}
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                <div role="group" aria-label="Which reports to show" style={{display:"inline-flex",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden",background:T.surface}}>
+                  {[["all","All reports ("+events.length+")"],["mine","My stocks ("+mine.length+")"]].map(([k,l],i)=>(
+                    <button key={k} aria-pressed={scope===k} onClick={()=>setScope(k)} style={{padding:"7px 13px",border:"none",borderLeft:i?`1px solid ${T.border}`:"none",background:scope===k?T.accent:"transparent",color:scope===k?T.accentInk:T.textSub,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.sans}}>{l}</button>
+                  ))}
                 </div>
-              )}
-
-              <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginBottom:6}}>The week at a glance</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:8}}>
+                <span style={{fontSize:11,color:T.textSub}}>Swipe or scroll across the week. Tap one of your stocks to open its analysis.</span>
+              </div>
+              {mine.length===0&&<div style={{fontSize:11,color:T.textSub,marginBottom:10}}>None of your {symbols.length} tickers report this week.</div>}
+              <div ref={railRef} style={{display:"grid",gridAutoFlow:"column",gridAutoColumns:"minmax(236px,1fr)",gap:10,overflowX:"auto",scrollSnapType:"x proximity",paddingBottom:8,WebkitOverflowScrolling:"touch"}}>
                 {days.map(d=>{
-                  const list=byDay[d.iso]||[];
+                  const all=(byDay[d.iso]||[]).filter(e=>scope==="all"||watchSet.has(e.symbol));
                   const isOpen=!!expanded[d.iso];
+                  const isToday=d.iso===ewToday();
                   return(
-                    <div key={d.iso} style={{background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 8px 6px",minWidth:0}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-                        <span style={{fontSize:12,fontWeight:700,color:T.text}}>{d.dow}</span>
-                        <span style={{fontSize:10,color:T.textSub}}>{d.label}</span>
+                    <div key={d.iso} ref={isToday?todayRef:undefined} style={{scrollSnapAlign:"start",background:T.surfaceB,border:`1px solid ${isToday?T.accent:T.border}`,borderRadius:8,padding:"10px 8px 8px",minWidth:0,display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{display:"flex",alignItems:"baseline",gap:8,padding:"0 4px 6px",borderBottom:`1px solid ${T.border}`}}>
+                        <span style={{fontFamily:T.display,fontSize:18,fontWeight:700,color:isToday?T.accent:T.text,letterSpacing:"-.01em"}}>{d.dow}</span>
+                        <span style={{fontFamily:T.mono,fontSize:11,color:T.textSub}}>{d.label}</span>
+                        <span style={{flex:1}}/>
+                        {isToday&&<span style={{fontSize:9,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",color:T.accent}}>Today</span>}
+                        <span style={{fontFamily:T.mono,fontSize:11,color:T.textSub}}>{all.length}</span>
                       </div>
-                      {list.length===0&&<div style={{fontSize:10,color:T.textSub,padding:"6px 0"}}>No big reports</div>}
+                      {all.length===0&&<div style={{fontSize:11,color:T.textSub,padding:"8px 4px"}}>{scope==="mine"?"None of your stocks":"No big reports"}</div>}
                       {EW_SLOTS.map(([slot,label])=>{
-                        const items=list.filter(e=>ewSlot(e.hour)===slot);
+                        const items=all.filter(e=>ewSlot(e.hour)===slot).sort((x,y)=>(watchSet.has(y.symbol)?1:0)-(watchSet.has(x.symbol)?1:0));
                         if(!items.length)return null;
-                        const shown=isOpen?items:items.slice(0,5);
+                        const shown=isOpen?items:items.slice(0,6);
                         return(
-                          <div key={slot||"tbd"} style={{marginBottom:6}}>
-                            <div style={{fontSize:8,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:T.textSub,margin:"6px 0 3px"}}>{label}</div>
-                            {shown.map(e=>{
-                              const mineIt=watchSet.has(e.symbol);
-                              return(
-                                <div key={e.symbol} title={names[e.symbol]||e.symbol} onClick={mineIt?()=>pick(e.symbol):undefined} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,padding:"3px 6px",marginBottom:2,borderRadius:6,border:`1px solid ${mineIt?T.accent:"transparent"}`,background:mineIt?T.accentBg:"transparent",cursor:mineIt?"pointer":"default"}}>
-                                  <span style={{fontSize:11,fontWeight:mineIt?700:600,color:mineIt?T.accent:T.text}}>{e.symbol}</span>
-                                  <span style={{fontSize:9,color:T.textSub,fontVariantNumeric:"tabular-nums"}}>{e.epsEstimate!=null?"est $"+e.epsEstimate.toFixed(2):""}</span>
-                                </div>
-                              );
-                            })}
+                          <div key={slot||"tbd"} style={{display:"flex",flexDirection:"column",gap:6}}>
+                            <div style={{fontSize:9,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",color:T.textSub,padding:"4px 4px 0"}}>{label}</div>
+                            {shown.map(e=>(<EwBox key={e.symbol} e={e} m={moves[e.symbol]} h={healthMap[e.symbol]} mine={watchSet.has(e.symbol)} name={names[e.symbol]} T={T} onPick={pick} onAdd={onAdd}/>))}
                           </div>
                         );
                       })}
-                      {list.length>5&&(
-                        <button onClick={()=>setExpanded(p=>Object.assign({},p,{[d.iso]:!p[d.iso]}))} style={{width:"100%",padding:"3px 0",border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer",fontFamily:T.sans}}>
-                          {isOpen?"Show fewer":`+ more (${list.length})`}
+                      {all.length>6&&(
+                        <button onClick={()=>setExpanded(p=>Object.assign({},p,{[d.iso]:!p[d.iso]}))} style={{padding:"6px 0",border:`1px dashed ${T.border}`,borderRadius:6,background:"transparent",color:T.textSub,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>
+                          {isOpen?"Show fewer":`Show all ${all.length}`}
                         </button>
                       )}
                     </div>
                   );
                 })}
               </div>
-              <div style={{fontSize:9,color:T.textSub,lineHeight:1.5,marginTop:10}}>
-                Shows your tickers, the popular-stock list and any report with an $8B+ revenue estimate. Dates are as companies have scheduled them and can move. "Avg move" is the absolute 1-day price change after each of the last reports. A company can beat estimates and still fall. Educational tool, not financial advice.
+              <div style={{fontSize:10,color:T.textSub,lineHeight:1.5,marginTop:8}}>
+                Shows your tickers, the popular-stock list and any report with an $8B+ revenue estimate. Estimates and dates come from public sources and can change. "Typical move" is the average 1-day price change after each of the last reports. A company can beat estimates and still fall. Educational tool, not financial advice.
               </div>
             </div>
           )}
@@ -2476,7 +2512,7 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
       </button>
       {TIMEFRAMES[tf]?.group==="Intraday"&&(
         <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:8,
-          background:"#6366F118",color:"#818CF8",border:"1px solid #6366F130",
+          background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}55`,
           letterSpacing:".05em",whiteSpace:"nowrap"}}>
           Pre+Post
         </span>
@@ -3080,7 +3116,7 @@ Return ONLY valid JSON:
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:20,textAlign:"center"}}>
       {error&&<div style={{fontSize:11,color:T.down,marginBottom:10,fontFamily:T.sans}}>⚠ {error}</div>}
       <div style={{fontSize:12,color:T.textSub,marginBottom:16,lineHeight:1.55}}>Claude will analyze {symbol}'s analyst consensus,<br/>earnings history, and recent news — no extra API file needed.</div>
-      <button onClick={generate} disabled={loading} style={{padding:"10px 24px",borderRadius:10,border:"none",cursor:loading?"not-allowed":"pointer",background:loading?T.border:"linear-gradient(135deg,#6366F1,#7C6FF7)",color:loading?T.textSub:"#fff",fontSize:13,fontWeight:700,boxShadow:loading?"none":"0 4px 16px rgba(99,102,241,0.35)"}}>
+      <button onClick={generate} disabled={loading} style={{padding:"10px 24px",borderRadius:10,border:"none",cursor:loading?"not-allowed":"pointer",background:loading?T.border:T.accent,color:loading?T.textSub:T.accentInk,fontSize:13,fontWeight:700}}>
         {loading?"Generating… (10-20s)":"✦ Generate AI Analysis"}
       </button>
     </div>
@@ -3088,7 +3124,7 @@ Return ONLY valid JSON:
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-      {data.oneLiner&&<div style={{background:"linear-gradient(135deg,#6366F118,#7C6FF710)",border:"1px solid #6366F130",borderRadius:10,padding:"12px 16px"}}>
+      {data.oneLiner&&<div style={{background:T.accentBg,border:`1px solid ${T.accent}55`,borderRadius:10,padding:"12px 16px"}}>
         <div style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:"#7C6FF7",marginBottom:5}}>AI Thesis</div>
         <div style={{fontSize:13,color:T.text,lineHeight:1.55,fontStyle:"italic"}}>"{data.oneLiner}"</div>
       </div>}
@@ -3575,9 +3611,440 @@ function TickerSearch({value,onChange,onSelect,onKeyDown,T}){
 }
 
 
+/* ═══════════════════════════════════════════════════════════
+   AI CONCIERGE + DAILY EMAIL — panels (module-level components)
+   ═══════════════════════════════════════════════════════════ */
+function AnswerLine({text}){
+  const parts=String(text).split(/\*\*(.+?)\*\*/g);
+  return(<span>{parts.map((p,i)=>i%2?<b key={i}>{p}</b>:p)}</span>);
+}
+function AnswerText({text,T}){
+  const lines=String(text||"").split("\n").map(l=>l.trimEnd()).filter(l=>l.trim()!=="");
+  return(
+    <div>
+      {lines.map((l,i)=>{
+        const m=l.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+        if(m)return(<div key={i} style={{display:"flex",gap:8,margin:"3px 0",paddingLeft:2}}><span style={{color:T.accent}}>•</span><span style={{flex:1}}><AnswerLine text={m[1]}/></span></div>);
+        const h=l.replace(/^#+\s*/,"");
+        return(<div key={i} style={{margin:i?"8px 0 0":0}}><AnswerLine text={h}/></div>);
+      })}
+    </div>
+  );
+}
+const CONCIERGE_ASKS=[
+  "Which of my stocks report earnings this week?",
+  "What moved the most today, and why?",
+  "Which of my stocks have caution flags?",
+  "Explain my riskiest stock in plain English",
+];
+function buildConciergeContext(stocks,healthMap,earnMap){
+  return stocks.filter(s=>s.p>0).slice(0,40).map(s=>{
+    const ch=pct(s.p,s.pc);
+    const h=healthMap[s.s];
+    const e=earnMap[s.s];
+    let line=`${s.s} $${s.p.toFixed(2)} ${ch>=0?"+":""}${ch.toFixed(2)}%`;
+    if(h&&h.level!=="nodata")line+=` | health: ${h.label}${h.flags&&h.flags.length?" ("+h.flags.map(f=>f.title).join("; ")+")":""}`;
+    if(e)line+=` | ${earnChipText(e)} ${e.date}${e.epsEstimate!=null?" EPS est $"+e.epsEstimate:""}`;
+    return line;
+  }).join("\n");
+}
+/* Entry bar that stays visible while you scroll. It sticks just above the mobile menu.
+   With long content it slides away after a few seconds; scroll up, tap the handle or focus the field to bring it back. */
+function DockBar({T,mobile,autoHide,children}){
+  const [hid,setHid]=useState(false);
+  const [navH,setNavH]=useState(mobile?58:0);
+  const focusRef=useRef(false);
+  const tmRef=useRef(null);
+  const lastY=useRef(0);
+  const arm=useCallback(()=>{
+    clearTimeout(tmRef.current);
+    if(!autoHide)return;
+    tmRef.current=setTimeout(()=>{if(!focusRef.current)setHid(true);},4000);
+  },[autoHide]);
+  useEffect(()=>{
+    if(!mobile){setNavH(0);return undefined;}
+    const el=document.querySelector("[data-mobile-nav]");
+    if(!el)return undefined;
+    const upd=()=>setNavH(el.offsetHeight||58);
+    upd();
+    if(typeof ResizeObserver==="undefined")return undefined;
+    const ro=new ResizeObserver(upd);
+    ro.observe(el);
+    return()=>ro.disconnect();
+  },[mobile]);
+  useEffect(()=>{
+    if(!autoHide){setHid(false);clearTimeout(tmRef.current);return undefined;}
+    arm();
+    const onScroll=()=>{
+      const y=window.scrollY||0;
+      if(y<lastY.current-4){setHid(false);arm();}
+      lastY.current=y;
+    };
+    window.addEventListener("scroll",onScroll,{passive:true});
+    return()=>{window.removeEventListener("scroll",onScroll);clearTimeout(tmRef.current);};
+  },[autoHide,arm]);
+  const show=()=>{setHid(false);arm();};
+  return(
+    <div data-dock style={{position:"sticky",bottom:navH,zIndex:35,marginTop:10,transform:hid?"translateY(calc(100% - 22px))":"none",transition:"transform .22s ease"}}
+      onFocusCapture={()=>{focusRef.current=true;setHid(false);clearTimeout(tmRef.current);}}
+      onBlurCapture={()=>{focusRef.current=false;arm();}}
+      onPointerDown={()=>{if(!hid)arm();}}>
+      <button type="button" aria-label={hid?"Show entry bar":"Entry bar"} aria-expanded={!hid} onClick={hid?show:undefined} tabIndex={hid?0:-1}
+        style={{display:"block",width:"100%",height:22,border:`1px solid ${T.border}`,borderBottom:"none",borderRadius:"8px 8px 0 0",background:T.surfaceB,cursor:hid?"pointer":"default",padding:0}}>
+        <span style={{display:"block",width:34,height:3,borderRadius:2,background:T.textSub,opacity:.6,margin:"0 auto"}}/>
+      </button>
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderTop:"none",padding:"10px 12px 10px"}}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,detail}){
+  const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_cc_open")==="1";}catch{return false;}});
+  const Head=embedded?"div":"button";
+  const [msgs,setMsgs]=useState([]);
+  const [q,setQ]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [plan,setPlan]=useState(null);
+  const endRef=useRef(null);
+  useEffect(()=>{try{localStorage.setItem("screener_cc_open",open?"1":"0");}catch{}},[open]);
+  useEffect(()=>{if(endRef.current&&msgs.length)endRef.current.scrollIntoView({block:"nearest",behavior:"smooth"});},[msgs,busy]);
+  const ask=async(text)=>{
+    const question=String(text||"").trim();
+    if(!question||busy)return;
+    const history=msgs.filter(m=>!m.error).map(m=>({role:m.role,content:m.text}));
+    setMsgs(p=>[...p,{role:"user",text:question}]);
+    setQ("");setBusy(true);
+    try{
+      const res=await fetch("/api/concierge",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question,history,symbols,detail:detail||"standard",context:buildConciergeContext(stocks,healthMap,earnMap)})});
+      const d=await res.json().catch(()=>({}));
+      if(!res.ok||!d.answer)throw new Error(d.error||"The concierge could not answer right now.");
+      if(d.tier)setPlan({tier:d.tier,left:d.left,limit:d.limit});
+      setMsgs(p=>[...p,{role:"assistant",text:d.answer,sources:d.sources||[]}]);
+    }catch(e){
+      setMsgs(p=>[...p,{role:"assistant",text:e.message||"Something went wrong.",error:true}]);
+    }finally{setBusy(false);}
+  };
+  const longChat=msgs.length>=4||msgs.reduce((n,m)=>n+m.text.length,0)>1800;
+  const entry=(
+    <>
+    <form onSubmit={e=>{e.preventDefault();ask(q);}} style={{display:"flex",gap:8}}>
+      <input value={q} onChange={e=>setQ(e.target.value)} maxLength={500} placeholder="e.g. Why is NVDA moving today?" aria-label="Ask the concierge a question" style={{flex:1,minWidth:0,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:13,fontFamily:T.sans,outline:"none"}}/>
+      <button type="submit" disabled={busy||q.trim().length<2} style={{padding:"9px 16px",borderRadius:8,border:"none",background:T.accent,color:T.accentInk,fontSize:12,fontWeight:600,cursor:busy||q.trim().length<2?"default":"pointer",opacity:busy||q.trim().length<2?0.5:1,fontFamily:T.sans}}>Ask</button>
+    </form>
+    <div style={{padding:"6px 2px 0",fontSize:10,color:T.textSub,lineHeight:1.5}}>{plan&&plan.limit?<b style={{fontFamily:T.mono,color:T.text}}>{plan.left} of {plan.limit} answers left today ({plan.tier}). </b>:null}AI can be wrong or out of date. Check the sources. Educational tool, not financial advice.</div>
+    </>
+  );
+  const card=(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:embedded?0:14,overflow:"hidden"}}>
+      <Head onClick={embedded?undefined:()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:embedded?"default":"pointer",textAlign:"left",fontFamily:T.sans}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Ask the Concierge</span>
+        <span style={{fontSize:11,color:T.textSub,flex:1}}>Ask anything about your stocks. Answers use live data and the web.</span>
+        {!embedded&&<span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>}
+      </Head>
+      {(embedded||open)&&(
+        <div style={{borderTop:`1px solid ${T.border}`}}>
+          <div style={{maxHeight:embedded?"none":420,minHeight:embedded?260:0,overflowY:embedded?"visible":"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
+            {msgs.length===0&&(
+              <div>
+                <div style={{fontSize:12,color:T.textSub,marginBottom:8,lineHeight:1.5}}>Try one of these, or type your own question below.</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {CONCIERGE_ASKS.map(a=>(<button key={a} onClick={()=>ask(a)} style={{padding:"6px 11px",borderRadius:16,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>{a}</button>))}
+                </div>
+              </div>
+            )}
+            {msgs.map((m,i)=>(
+              m.role==="user"
+                ?<div key={i} style={{alignSelf:"flex-end",maxWidth:"85%",background:T.accentBg,border:`1px solid ${T.border}`,color:T.text,borderRadius:12,padding:"8px 12px",fontSize:12.5,lineHeight:1.5}}>{m.text}</div>
+                :<div key={i} style={{alignSelf:"flex-start",maxWidth:"94%",background:T.surfaceB,border:`1px solid ${m.error?T.down:T.border}`,color:m.error?T.down:T.text,borderRadius:12,padding:"10px 13px",fontSize:12.5,lineHeight:1.6}}>
+                  <AnswerText text={m.text} T={T}/>
+                  {m.sources&&m.sources.length>0&&(
+                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`,fontSize:10.5,color:T.textSub,display:"flex",flexWrap:"wrap",gap:"4px 10px"}}>
+                      <span>Sources:</span>
+                      {m.sources.map(s=>(<a key={s.url} href={s.url} target="_blank" rel="noopener noreferrer" style={{color:T.accent,textDecoration:"none"}}>{s.title}</a>))}
+                    </div>
+                  )}
+                </div>
+            ))}
+            {busy&&<div style={{alignSelf:"flex-start",fontSize:12,color:T.textSub,padding:"4px 2px"}}>Checking live data and the news…</div>}
+            <div ref={endRef}/>
+          </div>
+          {!embedded&&<div style={{padding:"10px 16px 12px",borderTop:`1px solid ${T.border}`}}>{entry}</div>}
+        </div>
+      )}
+    </div>
+  );
+  return embedded?(<div>{card}<DockBar T={T} mobile={mobile} autoHide={longChat}>{entry}</DockBar></div>):card;
+}
+function EmailDigestPanel({T,symbols,listName,embedded,mobile,inline}){
+  const [open,setOpen]=useState(()=>{try{return localStorage.getItem("screener_em_open")==="1";}catch{return false;}});
+  const Head=embedded?"div":"button";
+  const [email,setEmail]=useState(()=>{try{return localStorage.getItem("screener_em_addr")||"";}catch{return "";}});
+  const [state,setState]=useState({kind:"idle",msg:""});
+  useEffect(()=>{try{localStorage.setItem("screener_em_open",open?"1":"0");}catch{}},[open]);
+  const list=symbols.slice(0,20);
+  const valid=/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const submit=async(e)=>{
+    e.preventDefault();
+    if(!valid||!list.length||state.kind==="busy")return;
+    setState({kind:"busy",msg:""});
+    try{
+      const res=await fetch("/api/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:email.trim(),symbols:list})});
+      const d=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(d.error||"Could not sign up right now.");
+      try{localStorage.setItem("screener_em_addr",email.trim());}catch{}
+      setState({kind:"ok",msg:d.message||"Check your inbox to confirm."});
+    }catch(err){setState({kind:"err",msg:err.message||"Could not sign up right now."});}
+  };
+  const entry=(
+    <>
+    <form onSubmit={submit} style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <input type="email" value={email} onChange={e=>{setEmail(e.target.value);if(state.kind!=="busy")setState({kind:"idle",msg:""});}} placeholder="you@example.com" aria-label="Email address for the daily brief" autoComplete="email" style={{flex:"1 1 200px",minWidth:0,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:13,fontFamily:T.sans,outline:"none"}}/>
+      <button type="submit" disabled={!valid||!list.length||state.kind==="busy"} style={{padding:"9px 16px",borderRadius:8,border:"none",background:T.accent,color:T.accentInk,fontSize:12,fontWeight:600,cursor:valid&&list.length&&state.kind!=="busy"?"pointer":"default",opacity:valid&&list.length&&state.kind!=="busy"?1:0.5,fontFamily:T.sans}}>{state.kind==="busy"?"Sending…":"Email me daily"}</button>
+    </form>
+    {state.msg&&<div role="status" style={{marginTop:8,fontSize:12,lineHeight:1.5,color:state.kind==="ok"?T.up:T.down}}>{state.msg}</div>}
+    </>
+  );
+  const card=(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:embedded?0:14,overflow:"hidden"}}>
+      <Head onClick={embedded?undefined:()=>setOpen(v=>!v)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",border:"none",background:"transparent",cursor:embedded?"default":"pointer",textAlign:"left",fontFamily:T.sans}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub}}>Daily Email</span>
+        <span style={{fontSize:11,color:T.textSub,flex:1}}>Get an AI brief on your watchlist every weekday morning.</span>
+        {!embedded&&<span style={{fontSize:11,color:T.textSub}}>{open?"Hide":"Show"}</span>}
+      </Head>
+      {(embedded||open)&&(
+        <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 16px 14px"}}>
+          <div style={{fontSize:12,color:T.text,lineHeight:1.55,marginBottom:6}}>One email per weekday for <b>{listName||"your list"}</b>: prices, biggest movers, who reports earnings, and what to watch.</div>
+          <div style={{fontSize:11,color:T.textSub,marginBottom:10,lineHeight:1.5}}>{list.length?`Includes ${list.join(", ")}${symbols.length>20?" (first 20)":""}.`:"Add a stock to this list first."} Every email has a one-click unsubscribe.</div>
+          {(!embedded||inline)&&<div style={{padding:"0 16px 14px"}}>{entry}</div>}
+        </div>
+      )}
+    </div>
+  );
+  return embedded&&!inline?(<div>{card}<DockBar T={T} mobile={mobile} autoHide={false}>{entry}</DockBar></div>):card;
+}
+
+/* ───────── Personal settings: theme builder ───────── */
+const hx=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+const mix=(a,b,t)=>"#"+hx(a).map((v,i)=>Math.round(v+(hx(b)[i]-v)*t).toString(16).padStart(2,"0")).join("");
+const ACCENTS={
+  purple:{n:"Purple",d:["#7C6FF7","#0E0B26"],l:["#5B4BD8","#FFFFFF"],
+    nd:{bg:"#08090E",surface:"#0F1018",surfaceB:"#161820",border:"#1E2334",chartGrid:"#1A1D2E"},
+    nl:{bg:"#F2F3F5",surface:"#FFFFFF",surfaceB:"#EBEDEF",border:"#D4D7DC",chartGrid:"#EBEDEF"}},
+  teal:{n:"Teal",d:["#4CC3A7","#06201A"],l:["#0E6655","#FFFFFF"]},
+  blue:{n:"Blue",d:["#6BA3F5","#071A33"],l:["#2A56B0","#FFFFFF"]},
+  rose:{n:"Rose",d:["#F28BA8","#2A0A14"],l:["#B4304F","#FFFFFF"]},
+};
+const DEFAULT_PREFS={mode:"dark",accent:"purple",shade:0,contrast:0,text:100,motion:1,refresh:15,start:"last",ccDetail:"standard"};
+function loadPrefs(){
+  let o={};
+  try{o=JSON.parse(localStorage.getItem("screener_prefs")||"{}")||{};}catch{}
+  if(!o.mode){try{o.mode=JSON.parse(localStorage.getItem("screener_dark")??"true")?"dark":"light";}catch{}}
+  return Object.assign({},DEFAULT_PREFS,o);
+}
+function makeTheme(isDark,pf){
+  const base=isDark?DARK:LIGHT;
+  const ac=ACCENTS[pf.accent]||ACCENTS.purple;
+  const [acc,ink]=isDark?ac.d:ac.l;
+  const t=Object.assign({},base,isDark?ac.nd:ac.nl);
+  t.accent=acc;t.accentInk=ink;
+  t.accentBg=acc+(isDark?"26":"1A");
+  t.insightText=acc;t.accentGlow="0 0 0 1px "+acc;
+  const sh=pf.shade||0;
+  if(sh){
+    const to=sh<0?"#000000":"#FFFFFF";
+    const amt=isDark?(sh<0?0.45:0.07):(sh<0?0.06:0.6);
+    ["bg","surface","surfaceB","chartGrid","insightBg"].forEach(k=>{t[k]=mix(t[k],to,amt);});
+    t.border=mix(t.border,to,amt*(isDark?0.7:0.4));t.insightBorder=t.border;
+  }
+  if(pf.contrast){
+    t.text=mix(t.text,isDark?"#FFFFFF":"#000000",0.6);
+    t.textSub=mix(t.textSub,t.text,0.55);
+    t.border=mix(t.border,t.text,0.28);t.insightBorder=t.border;
+  }
+  t.headerGrad=t.bg;
+  return t;
+}
+function SetCard({T,title,hint,children}){
+  return(
+    <section style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"14px 16px",marginBottom:12}}>
+      <h2 style={{margin:0,fontFamily:T.display,fontSize:17,fontWeight:700,color:T.text}}>{title}</h2>
+      {hint&&<div style={{fontSize:11,color:T.textSub,marginTop:2,lineHeight:1.5}}>{hint}</div>}
+      <div style={{marginTop:10,display:"flex",flexDirection:"column"}}>{children}</div>
+    </section>
+  );
+}
+function SetRow({T,label,hint,children}){
+  return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",padding:"10px 0",borderTop:`1px solid ${T.border}`}}>
+      <div style={{minWidth:150,flex:"1 1 170px"}}>
+        <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
+        {hint&&<div style={{fontSize:11,color:T.textSub,marginTop:1,lineHeight:1.45}}>{hint}</div>}
+      </div>
+      <div style={{flex:"0 1 auto",maxWidth:"100%"}}>{children}</div>
+    </div>
+  );
+}
+function Seg({T,label,value,options,onChange}){
+  return(
+    <div role="group" aria-label={label} style={{display:"inline-flex",flexWrap:"wrap",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden",background:T.surfaceB}}>
+      {options.map(([v,l],i)=>(
+        <button key={String(v)} aria-pressed={value===v} onClick={()=>onChange(v)} style={{padding:"7px 12px",border:"none",borderLeft:i?`1px solid ${T.border}`:"none",background:value===v?T.accent:"transparent",color:value===v?T.accentInk:T.textSub,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.sans}}>{l}</button>
+      ))}
+    </div>
+  );
+}
+function PlanCard({T}){
+  const [code,setCode]=useState(()=>{try{return localStorage.getItem("screener_code")||"";}catch{return "";}});
+  const [draft,setDraft]=useState("");
+  const [email,setEmail]=useState("");
+  const [st,setSt]=useState({kind:"idle",msg:""});
+  const [hp,setHp]=useState("");
+  const save=c=>{try{if(c)localStorage.setItem("screener_code",c);else localStorage.removeItem("screener_code");}catch{}setCode(c);};
+  const join=async e=>{
+    e.preventDefault();
+    if(st.kind==="busy")return;
+    setSt({kind:"busy",msg:""});
+    try{
+      const r=await fetch("/api/waitlist",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:email.trim(),source:"app",website:hp})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Could not sign up right now.");
+      if(d.code){save(d.code);setSt({kind:"ok",msg:"You are in the beta. Your access code "+d.code+" is saved on this device. Keep a copy."});}
+      else setSt({kind:"ok",msg:d.message||"You are on the list."});
+    }catch(err){setSt({kind:"err",msg:err.message||"Could not sign up right now."});}
+  };
+  const field={padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:13,fontFamily:T.sans,outline:"none",minWidth:0};
+  const btn=(on)=>({padding:"9px 14px",borderRadius:8,border:"none",background:T.accent,color:T.accentInk,fontSize:12,fontWeight:600,cursor:on?"pointer":"default",opacity:on?1:0.5,fontFamily:T.sans});
+  return(
+    <SetCard T={T} title="Your plan" hint="Free users get a few AI answers a day. Beta testers get more, and supporters get the most. This keeps the tool running for everyone.">
+      <SetRow T={T} label={code?"Access code saved":"Have an access code?"} hint={code?"Code "+code+" is active on this device.":"Paste the code from your beta invite."}>
+        {code
+          ?<button onClick={()=>save("")} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.sans}}>Remove code</button>
+          :<form onSubmit={e=>{e.preventDefault();const c=draft.trim().toUpperCase();if(/^[A-Z0-9]{8}$/.test(c)){save(c);setDraft("");}}} style={{display:"flex",gap:8}}>
+            <input value={draft} onChange={e=>setDraft(e.target.value)} maxLength={8} placeholder="8-character code" aria-label="Access code" style={Object.assign({},field,{width:150,fontFamily:T.mono,textTransform:"uppercase"})}/>
+            <button type="submit" disabled={draft.trim().length!==8} style={btn(draft.trim().length===8)}>Save</button>
+          </form>}
+      </SetRow>
+      {!code&&(
+        <SetRow T={T} label="Join the beta" hint="Free. You get an access code and early features. Limited seats.">
+          <form onSubmit={join} style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <input type="text" value={hp} onChange={e=>setHp(e.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true" style={{position:"absolute",left:-9999,width:1,height:1,opacity:0}}/>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" aria-label="Email for the beta" autoComplete="email" style={Object.assign({},field,{width:200})}/>
+            <button type="submit" disabled={!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())||st.kind==="busy"} style={btn(/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())&&st.kind!=="busy")}>Join beta</button>
+          </form>
+        </SetRow>
+      )}
+      {st.msg&&<div role="status" style={{fontSize:12,lineHeight:1.5,color:st.kind==="ok"?T.up:T.down,padding:"4px 0 6px"}}>{st.msg}</div>}
+      <SetRow T={T} label="Support the project" hint="Built on nights and weekends. Supporters help cover data and AI costs.">
+        <a href={DONATE_URL} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",padding:"9px 14px",borderRadius:8,border:`1px solid ${T.accent}`,color:T.accent,fontSize:12,fontWeight:600,textDecoration:"none",fontFamily:T.sans}}>Buy me a coffee</a>
+      </SetRow>
+    </SetCard>
+  );
+}
+function SettingsPanel({T,prefs,setPref,resetPrefs,autoRefresh,setAutoRefresh,mobile,symbols,listName}){
+  return(
+    <div style={{maxWidth:760}}>
+      <SetCard T={T} title="Appearance" hint="Changes apply right away and are saved on this device.">
+        <SetRow T={T} label="Mode"><Seg T={T} label="Mode" value={prefs.mode} onChange={v=>setPref("mode",v)} options={[["dark","Dark"],["light","Light"],["auto","Match device"]]}/></SetRow>
+        <SetRow T={T} label="Accent colour" hint="Purple also brings back the original blue-violet greys.">
+          <div role="group" aria-label="Accent colour" style={{display:"flex",gap:8}}>
+            {Object.keys(ACCENTS).map(k=>{const on=prefs.accent===k;const col=ACCENTS[k].d[0];return(
+              <button key={k} aria-pressed={on} aria-label={ACCENTS[k].n} title={ACCENTS[k].n} onClick={()=>setPref("accent",k)} style={{width:34,height:34,borderRadius:8,border:`2px solid ${on?T.text:T.border}`,background:T.surfaceB,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>
+                <span style={{width:18,height:18,borderRadius:4,background:col}}/>
+              </button>);})}
+          </div>
+        </SetRow>
+        <SetRow T={T} label="Shade" hint="How dark or light the surfaces are."><Seg T={T} label="Shade" value={prefs.shade} onChange={v=>setPref("shade",v)} options={[[-1,"Darker"],[0,"Standard"],[1,"Lighter"]]}/></SetRow>
+        <SetRow T={T} label="Contrast" hint="High makes text and borders stronger."><Seg T={T} label="Contrast" value={prefs.contrast} onChange={v=>setPref("contrast",v)} options={[[0,"Normal"],[1,"High"]]}/></SetRow>
+        <SetRow T={T} label="Text size"><Seg T={T} label="Text size" value={prefs.text} onChange={v=>setPref("text",v)} options={[[92,"Small"],[100,"Default"],[110,"Large"],[120,"Larger"]]}/></SetRow>
+        <SetRow T={T} label="Animations" hint="Turn off pulses and transitions."><Seg T={T} label="Animations" value={prefs.motion} onChange={v=>setPref("motion",v)} options={[[1,"On"],[0,"Off"]]}/></SetRow>
+      </SetCard>
+      <PlanCard T={T}/>
+      <SetCard T={T} title="Data and AI" hint="How often things update, and how the Concierge answers.">
+        <SetRow T={T} label="Auto-refresh prices" hint="Also available as the Auto button in the header."><Seg T={T} label="Auto-refresh" value={autoRefresh} onChange={setAutoRefresh} options={[[false,"Off"],[true,"On"]]}/></SetRow>
+        <SetRow T={T} label="Refresh rate" hint="Faster uses more of your data-provider quota."><Seg T={T} label="Refresh rate" value={prefs.refresh} onChange={v=>setPref("refresh",v)} options={[[15,"15 s"],[30,"30 s"],[60,"1 min"],[300,"5 min"]]}/></SetRow>
+        <SetRow T={T} label="Concierge answers" hint="Shorter answers are faster and cost less."><Seg T={T} label="Concierge answer length" value={prefs.ccDetail} onChange={v=>setPref("ccDetail",v)} options={[["brief","Brief"],["standard","Standard"],["detailed","Detailed"]]}/></SetRow>
+        <SetRow T={T} label="Open on" hint="Which section shows when you start the app."><Seg T={T} label="Start section" value={prefs.start} onChange={v=>setPref("start",v)} options={[["last","Last used"],["watchlist","Watchlist"],["overview","Overview"],["earnings","Earnings"]]}/></SetRow>
+      </SetCard>
+      <SetCard T={T} title="Daily newsletter" hint="A weekday morning AI brief for the list you are viewing. You confirm by email first and can unsubscribe in one click.">
+        <EmailDigestPanel inline embedded mobile={mobile} T={T} symbols={symbols} listName={listName}/>
+      </SetCard>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+        <button onClick={resetPrefs} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.sans}}>Reset appearance and data settings</button>
+      </div>
+    </div>
+  );
+}
+
+const SECTIONS=[
+  {id:"overview",label:"Overview"},
+  {id:"watchlist",label:"Watchlist"},
+  {id:"earnings",label:"Earnings"},
+  {id:"playbooks",label:"Playbooks"},
+  {id:"concierge",label:"Concierge"},
+  {id:"settings",label:"Settings"},
+];
+function NavIcon({k,c}){
+  const P={
+    overview:"M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+    watchlist:"M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
+    earnings:"M7 3v3M17 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8 13h3",
+    playbooks:"M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5",
+    concierge:"M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4v-4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
+    settings:"M4 7h9M17 7h3M4 17h3M11 17h9M15 4v6M9 14v6",
+  };
+  return(<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={P[k]}/></svg>);
+}
+function SectionNav({T,sec,onSelect,badges,mobile}){
+  if(mobile){
+    return(
+      <div data-mobile-nav role="tablist" aria-label="Sections" style={{position:"fixed",left:0,right:0,bottom:0,zIndex:40,display:"grid",gridTemplateColumns:`repeat(${SECTIONS.length},1fr)`,background:T.surface,borderTop:`1px solid ${T.border}`,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
+        {SECTIONS.map(x=>{
+          const on=sec===x.id;
+          const b=badges&&badges[x.id];
+          const col=on?T.accent:T.textSub;
+          return(
+            <button key={x.id} role="tab" aria-selected={on} aria-label={x.label} onClick={()=>onSelect(x.id)} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,padding:"9px 2px 8px",minHeight:56,border:"none",background:"transparent",color:col,cursor:"pointer",fontFamily:T.sans,fontSize:10,fontWeight:on?700:500,WebkitTapHighlightColor:"transparent"}}>
+              <NavIcon k={x.id} c={col}/>
+              <span style={{maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.short||x.label}</span>
+              {b?<span style={{position:"absolute",top:5,left:"calc(50% + 6px)",fontSize:9,fontWeight:700,minWidth:15,height:15,lineHeight:"15px",textAlign:"center",padding:"0 4px",borderRadius:4,fontFamily:T.mono,background:T.accent,color:T.accentInk}}>{b}</span>:null}
+              {on&&<span style={{position:"absolute",top:0,left:"22%",right:"22%",height:2,borderRadius:2,background:T.accent}}/>}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+  return(
+    <div role="tablist" aria-label="Sections" style={{position:"sticky",top:0,zIndex:30,background:T.bg,display:"flex",gap:2,overflowX:"auto",borderBottom:`1px solid ${T.border}`,margin:"0 0 14px",padding:"6px 0 0",scrollbarWidth:"none"}}>
+      {SECTIONS.map(x=>{
+        const on=sec===x.id;
+        const b=badges&&badges[x.id];
+        return(
+          <button key={x.id} role="tab" aria-selected={on} onClick={()=>onSelect(x.id)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:7,padding:"10px 14px",border:"none",background:"transparent",color:on?T.accent:T.textSub,fontWeight:on?600:500,fontSize:13,cursor:"pointer",borderBottom:`2px solid ${on?T.accent:"transparent"}`,marginBottom:-1,fontFamily:T.sans,whiteSpace:"nowrap"}}>
+            <NavIcon k={x.id} c={on?T.accent:T.textSub}/>
+            {x.label}
+            {b?<span style={{fontSize:10,fontWeight:700,minWidth:16,height:16,lineHeight:"16px",textAlign:"center",padding:"0 5px",borderRadius:4,fontFamily:T.mono,background:on?T.accentBg:T.surfaceB,color:on?T.accent:T.textSub,border:`1px solid ${T.border}`}}>{b}</span>:null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function StockScreener(){
-  const [isDark,setIsDark]=useState(()=>{try{return JSON.parse(localStorage.getItem("screener_dark")??"true");}catch{return true;}});
-  const T=isDark?DARK:LIGHT;
+  const [prefs,setPrefs]=useState(loadPrefs);
+  const [sysDark,setSysDark]=useState(()=>{try{return window.matchMedia("(prefers-color-scheme: dark)").matches;}catch{return true;}});
+  useEffect(()=>{
+    let mq;try{mq=window.matchMedia("(prefers-color-scheme: dark)");}catch{return undefined;}
+    const f=e=>setSysDark(e.matches);
+    if(mq.addEventListener)mq.addEventListener("change",f);
+    return()=>{if(mq.removeEventListener)mq.removeEventListener("change",f);};
+  },[]);
+  const isDark=prefs.mode==="auto"?sysDark:prefs.mode!=="light";
+  const T=useMemo(()=>makeTheme(isDark,prefs),[isDark,prefs.accent,prefs.shade,prefs.contrast]);// eslint-disable-line
+  const setPref=useCallback((k,v)=>setPrefs(p=>Object.assign({},p,{[k]:v})),[]);
+  const resetPrefs=useCallback(()=>setPrefs(p=>Object.assign({},DEFAULT_PREFS,{mode:p.mode})),[]);
   const [isMobile,setIsMobile]=useState(false);
   const [names,setNames]=useState({...BASE_NAMES});
   const [tabs,setTabs]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("screener_tabs")??"null");return s?.length?s:DEFAULT_TABS;}catch{return DEFAULT_TABS;}});
@@ -3591,6 +4058,8 @@ export default function StockScreener(){
   const [filters,setFilters]=useState({changeMin:null,changeMax:null});
   const [selectedIdx,setSelectedIdx]=useState(null);
   const [selected,setSelected]=useState(null);
+  const [sec,setSecRaw]=useState(()=>{try{const st=loadPrefs().start;if(st&&st!=="last"&&SECTIONS.some(x=>x.id===st))return st;const v=localStorage.getItem("screener_section");return SECTIONS.some(x=>x.id===v)?v:"watchlist";}catch{return"watchlist";}});
+  const setSec=useCallback(v=>{setSecRaw(v);try{localStorage.setItem("screener_section",v);}catch{}if(typeof window!=="undefined"&&window.scrollTo)window.scrollTo({top:0});},[]);
   const [viewMode,setViewMode]=useState(()=>{try{return localStorage.getItem("screener_viewMode")||"grid";}catch{return"grid";}});
   const [sort,setSort]=useState(()=>{try{return localStorage.getItem("screener_sort")||"change_desc";}catch{return"change_desc";}});
   const [newTicker,setNewTicker]=useState("");
@@ -3608,7 +4077,7 @@ export default function StockScreener(){
     return()=>window.removeEventListener("resize",check);
   },[]);
 
-  useEffect(()=>{try{localStorage.setItem("screener_dark",JSON.stringify(isDark));}catch{}},[isDark]);
+  useEffect(()=>{try{localStorage.setItem("screener_prefs",JSON.stringify(prefs));localStorage.setItem("screener_dark",JSON.stringify(isDark));}catch{}},[prefs,isDark]);
   useEffect(()=>{try{localStorage.setItem("screener_tabs",JSON.stringify(tabs));}catch{}},[tabs]);
   useEffect(()=>{try{localStorage.setItem("screener_activeTab",activeTab);}catch{}},[activeTab]);
   useEffect(()=>{try{localStorage.setItem("screener_viewMode",viewMode);}catch{}},[viewMode]);
@@ -3616,9 +4085,9 @@ export default function StockScreener(){
 
   useEffect(()=>{
     if(autoRef.current)clearInterval(autoRef.current);
-    if(autoRefresh){autoRef.current=setInterval(()=>runRefresh(curTab.stocks),15000);}
+    if(autoRefresh){autoRef.current=setInterval(()=>runRefresh(curTab.stocks),(prefs.refresh||15)*1000);}
     return()=>{ if(autoRef.current)clearInterval(autoRef.current); };
-  },[autoRefresh,activeTab]);
+  },[autoRefresh,activeTab,prefs.refresh]);
 
   const curTab=tabs.find(t=>t.id===activeTab)||tabs[0];
   const [earnMap,setEarnMap]=useState({});
@@ -3782,6 +4251,7 @@ export default function StockScreener(){
   const pickSymbol=useCallback(sym=>{
     const t=tabsRef.current.find(x=>x.stocks.some(s=>s.s===sym));
     if(!t)return;
+    setSecRaw("watchlist");try{localStorage.setItem("screener_section","watchlist");}catch{}
     setActiveTab(t.id);
     setSelected(t.stocks.find(s=>s.s===sym));
     setAutoSym(sym);
@@ -3835,24 +4305,26 @@ export default function StockScreener(){
   );
 
   return(
-    <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:T.sans,padding:isMobile?"10px 12px 32px":"18px 24px 48px",boxSizing:"border-box",transition:"background 0.2s,color 0.2s"}}>
+    <div style={{minHeight:"100vh",zoom:prefs.text===100?undefined:prefs.text/100,background:T.bg,color:T.text,fontFamily:T.sans,padding:isMobile?"10px 12px 32px":"18px 24px 48px",boxSizing:"border-box",transition:"background 0.2s,color 0.2s"}}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         html,body,#root{margin:0;padding:0;background:${T.bg};}
         *{box-sizing:border-box;}
         @keyframes pulse  {0%,100%{opacity:1}50%{opacity:0.3}}
         @keyframes fadeUp {from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes shimmer{0%,100%{opacity:0.5}50%{opacity:0.9}}
-        @keyframes purpleGlow{0%,100%{box-shadow:0 0 8px rgba(124,111,247,0.3)}50%{box-shadow:0 0 20px rgba(124,111,247,0.6)}}
+        @keyframes purpleGlow{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 3px ${T.accent}55}}
         ::-webkit-scrollbar{width:4px;height:4px}
         ::-webkit-scrollbar-thumb{background:${T.border};border-radius:2px}
         input::placeholder{color:${T.textSub}}
+        ${prefs.motion?"":"*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}"}
       `}</style>
 
       {/* ── HEADER ────────────────────────────── */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8,padding:"4px 0 8px",borderBottom:`1px solid ${T.border}`}}>
         <div>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            <div style={{fontSize:isMobile?16:20,fontWeight:700,color:T.text,letterSpacing:"-0.02em"}}>AI Market Screener</div>
+            <div style={{fontFamily:T.display,fontSize:isMobile?18:24,fontWeight:700,color:T.text,letterSpacing:"-0.02em"}}>AI Market Screener</div>
             {!isMobile&&session&&<span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:10,background:`${SESSION_CFG[session]?.color}20`,color:SESSION_CFG[session]?.color,letterSpacing:".07em",textTransform:"uppercase"}}>{SESSION_CFG[session]?.label}</span>}
           </div>
           {!isMobile&&<div style={{fontSize:11,color:T.textSub,marginTop:2}}>AI-powered · Tap any index to view chart</div>}
@@ -3868,7 +4340,7 @@ export default function StockScreener(){
           <button onClick={()=>runRefresh(curTab.stocks)} disabled={refreshing} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:refreshing?T.textSub:T.text,fontSize:11,cursor:refreshing?"default":"pointer",display:"flex",alignItems:"center",gap:5,boxShadow:T.shadow}}>
             <span style={refreshing?{animation:"pulse 1s infinite",display:"inline-block"}:{}}>{refreshing?"↻ Refreshing…":"↻ Refresh"}</span>
           </button>
-          <button onClick={()=>setIsDark(v=>!v)} style={{padding:"5px 11px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:12,cursor:"pointer",boxShadow:T.shadow}}>
+          <button onClick={()=>setPref("mode",isDark?"light":"dark")} style={{padding:"5px 11px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:12,cursor:"pointer",boxShadow:T.shadow}}>
             {isDark?<I.Sun s={13}/>:<I.Moon s={13}/>}
           </button>
         </div>
@@ -3878,14 +4350,26 @@ export default function StockScreener(){
       <MarketBar indices={indices} selectedIdx={selectedIdx} onSelectIdx={setSelectedIdx} T={T}/>
       {selectedIdx&&<IndexChart key={selectedIdx.s} index={selectedIdx} T={T}/>}
 
-      {/* ── DAILY BRIEF ───────────────────────────────── */}
-      <DailyBrief indices={indices} stocks={allStocks} news={mktNews} T={T}/>
-      {/* ── INTELLIGENCE FEED ─────────────────────── */}
-      <EarningsWeek symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T} onWatch={setEarnMap} onPick={pickSymbol}/>
-      <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
+      <SectionNav T={T} sec={sec} onSelect={setSec} mobile={isMobile} badges={{earnings:Object.keys(earnMap).length||null}}/>
+      {/* Sections stay mounted (hidden) so data keeps loading and chats/scans keep their state */}
+      <div role="tabpanel" style={{display:sec==="overview"?"block":"none"}}>
+        <DailyBrief indices={indices} stocks={allStocks} news={mktNews} T={T}/>
+        <IntelligenceFeed stocks={allStocks} news={mktNews} symbols={allSymbols} T={T}/>
+      </div>
+      <div role="tabpanel" style={{display:sec==="earnings"?"block":"none"}}>
+        <EarningsWeek embedded symbols={allSymbols} stocks={allStocks} healthMap={healthMap} names={names} T={T} onWatch={setEarnMap} onPick={pickSymbol} onAdd={sym=>addTickerBySymbol(sym)}/>
+      </div>
+      <div role="tabpanel" style={{display:sec==="playbooks"?"block":"none"}}>
+        <PlaybooksPanel embedded T={T} names={names} tabSymbols={curTab.stocks.map(x=>x.s)} onAdd={sym=>addTickerBySymbol(sym)}/>
+      </div>
+      <div role="tabpanel" style={{display:sec==="concierge"?"block":"none"}}>
+        <ConciergePanel mobile={isMobile} detail={prefs.ccDetail} embedded T={T} stocks={allStocks} healthMap={healthMap} earnMap={earnMap} symbols={allSymbols}/>
+      </div>
+      <div role="tabpanel" style={{display:sec==="settings"?"block":"none"}}>
+        <SettingsPanel T={T} prefs={prefs} setPref={setPref} resetPrefs={resetPrefs} autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh} mobile={isMobile} symbols={curTab.stocks.map(x=>x.s)} listName={curTab.label}/>
+      </div>
 
-      <PlaybooksPanel T={T} names={names} tabSymbols={curTab.stocks.map(x=>x.s)} onAdd={sym=>addTickerBySymbol(sym)}/>
-
+      <div role="tabpanel" style={{display:sec==="watchlist"?"block":"none"}}>
       {/* ── TABS (underline style) ─────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:0,overflowX:"auto",borderBottom:`1px solid ${T.border}`}}>
         {tabs.map(t=>(
@@ -3958,6 +4442,9 @@ export default function StockScreener(){
       {/* ── RECOMMENDATIONS ──────────────────────── */}
 
 
+      </div>
+
+      {isMobile&&<div aria-hidden="true" style={{height:"calc(64px + env(safe-area-inset-bottom,0px))"}}/>}
       <div style={{marginTop:20,textAlign:"center",fontSize:10,color:T.textTert,fontFamily:T.sans}}>
         Market data · Not financial advice
       </div>

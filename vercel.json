@@ -1,8 +1,24 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite",
+  "crons": [
+    {
+      "path": "/api/daily-report",
+      "schedule": "30 13 * * 1-5"
+    }
+  ],
+  "functions": {
+    "api/daily-report.js": {
+      "maxDuration": 60
+    },
+    "api/concierge.js": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
+    {
+      "source": "/welcome",
+      "destination": "/welcome/index.html"
+    }
   ]
 }

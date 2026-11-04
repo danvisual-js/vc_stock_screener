@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AI Market Screener: Wall Street, minus the jargon</title>
+<meta name="description" content="A free, mobile-first stock screener with an AI concierge that explains your stocks in plain English, a weekday morning brief, and an earnings calendar that finally makes sense. Join the beta.">
+<meta property="og:title" content="Know why your stocks moved, before your coffee gets cold">
+<meta property="og:description" content="Plain-English AI answers, a weekday morning brief and a clean earnings calendar for everyday investors. Free beta.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/welcome/img/earnings.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F4F3FA; --surface:#FFFFFF; --surface2:#EDECF6; --ink:#15132B; --muted:#585673; --line:#D9D7EA;
+  --accent:#5B4BD8; --accent-ink:#FFFFFF; --accent-soft:#E6E2FB; --up:#1C7A47; --warn:#9A5B00;
+  --f-display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,-apple-system,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#08090E; --surface:#0F1018; --surface2:#161820; --ink:#EEF0F8; --muted:#9A9DB8; --line:#222640;
+  --accent:#7C6FF7; --accent-ink:#0E0B26; --accent-soft:#1C1A44; --up:#5CCB8A; --warn:#E7B15A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#08090E; --surface:#0F1018; --surface2:#161820; --ink:#EEF0F8; --muted:#9A9DB8; --line:#222640;
+  --accent:#7C6FF7; --accent-ink:#0E0B26; --accent-soft:#1C1A44; --up:#5CCB8A; --warn:#E7B15A; color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--f-body);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+img{max-width:100%;height:auto}
+.hero>*{min-width:0}
+.wrap{max-width:1080px;margin:0 auto;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--f-display);line-height:1.08;margin:0;text-wrap:balance;letter-spacing:-.02em}
+.eyebrow{font:600 12px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+/* top bar */
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:16px}
+.brand{font:700 18px var(--f-display);color:var(--ink);text-decoration:none;display:flex;align-items:center;gap:9px}
+.brand i{width:22px;height:22px;border-radius:6px;background:var(--accent);display:inline-block;position:relative}
+.brand i::after{content:"";position:absolute;left:5px;right:5px;bottom:5px;height:9px;border-left:3px solid var(--accent-ink);border-bottom:3px solid var(--accent-ink);transform:skewX(-20deg) scaleY(.6);opacity:.9}
+nav{display:flex;gap:6px;align-items:center}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 20px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font:600 15px var(--f-body);text-decoration:none;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn.sm{padding:8px 14px;font-size:13px}
+.btn:disabled{opacity:.55;cursor:default}
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:40px;align-items:center;padding-block:36px 56px}
+.hero h1{font-size:clamp(38px,6.4vw,68px);font-weight:800;margin:14px 0 16px}
+.hero h1 em{font-style:normal;color:var(--accent)}
+.lede{font-size:clamp(17px,2.2vw,20px);color:var(--muted);max-width:34em;margin:0 0 22px}
+.signup{display:flex;gap:10px;flex-wrap:wrap;max-width:520px}
+.signup input[type=email]{flex:1 1 230px;min-width:0;padding:13px 14px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:16px var(--f-body)}
+.signup input:focus-visible,.btn:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.fine{font-size:13px;color:var(--muted);margin:10px 0 0}
+.result{margin-top:14px;padding:14px 16px;border-radius:8px;border:1px solid var(--line);background:var(--surface);max-width:520px}
+.result[hidden]{display:none}
+.code{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.code b{font:600 24px var(--f-mono);letter-spacing:.18em;background:var(--accent-soft);color:var(--accent);padding:6px 12px;border-radius:6px}
+.err{color:#C0392B}
+.shot{position:relative}
+.shot .desk{width:100%;border-radius:10px;border:1px solid var(--line);display:block}
+.shot .phone{position:absolute;right:-6px;bottom:-26px;width:31%;height:auto;border-radius:18px;border:1px solid var(--line);box-shadow:0 14px 40px rgba(0,0,0,.35)}
+.proof{display:flex;gap:10px 18px;flex-wrap:wrap;margin-top:22px;font:500 13px var(--f-mono);color:var(--muted)}
+.proof span::before{content:"";display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--accent);margin-right:8px}
+/* sections */
+section{padding-block:56px;border-top:1px solid var(--line)}
+section h2{font-size:clamp(28px,4.4vw,42px);font-weight:700;margin:12px 0 14px}
+.sub{color:var(--muted);max-width:40em;margin:0 0 28px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:20px}
+.card h3{font-size:21px;margin:10px 0 8px}
+.card p{margin:0;color:var(--muted);font-size:15px}
+.tag{font:600 11px var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.demo{background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-top:14px;font-size:14px}
+.demo q{display:block;color:var(--muted);quotes:none;margin-bottom:6px;font-style:italic}
+.story{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:36px;align-items:start}
+.story p{margin:0 0 16px;font-size:18px}
+.pull{font:700 clamp(24px,3.6vw,34px)/1.15 var(--f-display);border-left:4px solid var(--accent);padding-left:18px}
+.tiers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.tier{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:20px;display:flex;flex-direction:column;gap:8px}
+.tier.hot{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.tier h3{font-size:22px}
+.tier .n{font:600 34px var(--f-mono)}
+.tier .n small{font-size:13px;color:var(--muted);font-weight:500}
+.tier ul{margin:4px 0 6px;padding-left:18px;color:var(--muted);font-size:15px}
+.tier .btn{margin-top:auto}
+.coffee{display:flex;gap:22px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:26px}
+.coffee h2{margin:0 0 6px;font-size:clamp(24px,3.6vw,34px)}
+.coffee p{margin:0;color:var(--muted);max-width:36em}
+details{border-top:1px solid var(--line);padding:14px 0}
+details:last-of-type{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;font:600 17px var(--f-display);list-style:none;display:flex;justify-content:space-between;gap:12px}
+summary::after{content:"+";font:500 20px var(--f-mono);color:var(--accent)}
+details[open] summary::after{content:"–"}
+details p{margin:10px 0 0;color:var(--muted)}
+footer{padding-block:34px 60px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+@media (max-width:860px){
+  .hero,.story{grid-template-columns:minmax(0,1fr)}
+  .grid3,.tiers{grid-template-columns:minmax(0,1fr)}
+  .shot{margin-bottom:34px}
+  .shot .phone{width:34%;right:0}
+  nav .hide-sm{display:none}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="#top"><i aria-hidden="true"></i>AI Market Screener</a>
+    <nav aria-label="Primary">
+      <a class="btn ghost sm hide-sm" href="#how">How it works</a>
+      <a class="btn ghost sm hide-sm" href="#plans">Plans</a>
+      <a class="btn sm" href="#join">Join the beta</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <div class="hero">
+      <div>
+        <div class="eyebrow">Free beta · built for everyday investors</div>
+        <h1>Know why your stocks moved, <em>before your coffee gets cold.</em></h1>
+        <p class="lede">Ask an AI concierge anything about the stocks you follow and get a plain-English answer with sources. Wake up to a weekday brief on your watchlist. See the whole earnings week on one calm screen. No jargon. No trade buttons. No hype.</p>
+        <form class="signup" id="joinForm" novalidate>
+          <label class="hp" aria-hidden="true">Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+          <input type="email" name="email" placeholder="you@example.com" aria-label="Email address" autocomplete="email" required>
+          <button class="btn" type="submit" id="joinBtn">Get early access</button>
+        </form>
+        <p class="fine">Free. First 100 testers get an access code with a bigger AI allowance. No spam, unsubscribe any time.</p>
+        <div class="result" id="result" role="status" hidden></div>
+        <div class="proof"><span>Works on phone and desktop</span><span>AI answers cite their sources</span><span>Educational, not advice</span></div>
+      </div>
+      <div class="shot">
+        <img class="desk" src="img/earnings.jpg" width="1920" height="990" alt="The earnings week calendar: each company in a box with its EPS and revenue estimates, grouped Monday to Friday">
+        <img class="phone" src="img/concierge.jpg" width="780" height="1560" alt="The AI concierge answering a question about which stock moved the most today" loading="lazy">
+      </div>
+    </div>
+  </main>
+
+  <section id="how">
+    <div class="eyebrow">What it does</div>
+    <h2>Three things, done calmly.</h2>
+    <p class="sub">Most finance apps try to keep you trading. This one tries to keep you informed.</p>
+    <div class="grid3">
+      <article class="card">
+        <div class="tag">01 · Concierge</div>
+        <h3>Ask in plain English</h3>
+        <p>Type a question the way you would ask a friend who follows the market. It checks live quotes, recent headlines and the web, then answers with sources.</p>
+        <div class="demo"><q>Why is NVDA moving today?</q>Shows what moved, the likely reasons from the news, and what is scheduled next.</div>
+      </article>
+      <article class="card">
+        <div class="tag">02 · Morning brief</div>
+        <h3>One email, weekday mornings</h3>
+        <p>Pick a watchlist and get a short AI brief: prices, biggest movers, who reports earnings, and what to watch. Confirm once, unsubscribe in one click.</p>
+      </article>
+      <article class="card">
+        <div class="tag">03 · Earnings week</div>
+        <h3>The whole week at a glance</h3>
+        <p>Every ticker in a box with its estimates, grouped before the open and after the close, and highlighted when it is on your list. Tap one to open its analysis.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="story">
+    <div class="eyebrow">Why this exists</div>
+    <div class="story">
+      <p class="pull">I'm a product designer, not a Wall Street person. I wanted one calm place that tells me what moved, why, and what is next.</p>
+      <div>
+        <p>Every finance app I tried either buried me in jargon or nudged me to trade. I did not need another way to gamble. I needed to understand my own watchlist in the five minutes I had with my morning coffee.</p>
+        <p>So I started building one on nights and weekends, with my own time and money. It has a screener, health flags that explain what to be careful about, an earnings calendar, and an AI concierge that talks like a person.</p>
+        <p>It is early, and the next features come from the people who use it. If that sounds like you, join the beta and tell me what is missing.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="plans">
+    <div class="eyebrow">Plans</div>
+    <h2>Free to start. Fair to keep running.</h2>
+    <p class="sub">AI answers cost real money per question, so each plan has a daily allowance. That keeps the tool fast and online for everyone.</p>
+    <div class="tiers">
+      <div class="tier">
+        <h3>Free</h3><div class="n">5 <small>AI answers / day</small></div>
+        <ul><li>Screener, charts and earnings calendar</li><li>Concierge and AI analysis, lightly capped</li><li>Weekday email brief</li></ul>
+        <a class="btn ghost" href="/">Open the app</a>
+      </div>
+      <div class="tier hot">
+        <h3>Beta tester</h3><div class="n">30 <small>AI answers / day</small></div>
+        <ul><li>Everything in Free</li><li>Early access to new features</li><li>A direct line to shape what ships</li></ul>
+        <a class="btn" href="#join">Join the beta</a>
+      </div>
+      <div class="tier">
+        <h3>Supporter</h3><div class="n">100 <small>AI answers / day</small></div>
+        <ul><li>Everything in Beta</li><li>The largest allowance</li><li>Helps cover data and AI costs</li></ul>
+        <a class="btn ghost" href="#coffee" id="supBtn">Become a supporter</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="coffee">
+    <div class="coffee">
+      <div>
+        <h2>Like it? Buy me a coffee.</h2>
+        <p>Market data and AI are paid for out of my own pocket. A coffee keeps the lights on and the free tier free. After you donate, send me a note and I'll upgrade your code to Supporter.</p>
+      </div>
+      <a class="btn" id="donate" href="https://buymeacoffee.com/YOUR_NAME" target="_blank" rel="noopener noreferrer">Buy me a coffee</a>
+    </div>
+  </section>
+
+  <section id="join">
+    <div class="eyebrow">Beta</div>
+    <h2>Get your access code.</h2>
+    <p class="sub">Add your email and the first 100 testers get a code instantly. Enter it in Settings inside the app.</p>
+    <form class="signup" id="joinForm2" novalidate>
+      <label class="hp" aria-hidden="true">Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+      <input type="email" name="email" placeholder="you@example.com" aria-label="Email address" autocomplete="email" required>
+      <button class="btn" type="submit">Get early access</button>
+    </form>
+    <div class="result" id="result2" role="status" hidden></div>
+  </section>
+
+  <section id="faq">
+    <div class="eyebrow">Questions</div>
+    <h2>The honest answers.</h2>
+    <details><summary>Is this financial advice?</summary><p>No. It is an educational tool. It never tells you to buy, sell or hold, and AI answers can be wrong or out of date, so check the sources. Talk to a licensed adviser for decisions about your money.</p></details>
+    <details><summary>Where does the data come from?</summary><p>Prices, headlines and earnings dates come from public market-data providers, and the Concierge can search the web. Estimates and dates can change.</p></details>
+    <details><summary>What do you do with my email?</summary><p>It is used only for beta access and the daily brief if you ask for it. It is never sold. The daily brief needs a confirmation click, and every email has a one-click unsubscribe.</p></details>
+    <details><summary>Why is there a daily limit on AI answers?</summary><p>Each AI answer costs money to run. Limits stop abuse and keep the free tier sustainable. Beta testers and supporters get bigger allowances.</p></details>
+    <details><summary>Is it open source?</summary><p>Not right now. The code stays private while the product is young.</p></details>
+  </section>
+
+  <footer>
+    <div>AI Market Screener · Educational tool, not financial advice. Market data may be delayed or inaccurate.</div>
+    <div style="margin-top:8px"><a href="/">Open the app</a></div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var DONATE_URL = "https://buymeacoffee.com/YOUR_NAME"; // <- set to your Ko-fi / Buy Me a Coffee / GitHub Sponsors link
+  var d = document.getElementById("donate"); if (d) d.href = DONATE_URL;
+  var src = ""; try { src = (new URLSearchParams(location.search).get("ref") || document.referrer.split("/")[2] || "").slice(0, 40); } catch (e) {}
+
+  function wire(formId, outId){
+    var f = document.getElementById(formId), out = document.getElementById(outId);
+    if (!f) return;
+    f.addEventListener("submit", function(ev){
+      ev.preventDefault();
+      var em = f.elements.email.value.trim();
+      var btn = f.querySelector("button");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em)) { show(out, "<span class='err'>Enter a valid email address.</span>"); return; }
+      btn.disabled = true; var old = btn.textContent; btn.textContent = "Joining…";
+      fetch("/api/waitlist", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: em, website: f.elements.website.value, source: src || "lander" }) })
+        .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+        .then(function(x){
+          if (!x.ok) throw new Error(x.j.error || "Could not sign up right now.");
+          if (x.j.code) {
+            try { localStorage.setItem("screener_code", x.j.code); } catch (e) {}
+            show(out, "<b>You are in the beta.</b> Your access code:<div class='code'><b id='cd'>" + x.j.code + "</b><button class='btn sm ghost' type='button' id='cp'>Copy</button></div><p class='fine'>It is saved in this browser. Keep a copy, or enter it in Settings in the app. <a href='/'>Open the app</a></p>");
+            var cp = document.getElementById("cp");
+            if (cp) cp.onclick = function(){ try { navigator.clipboard.writeText(x.j.code).then(function(){ cp.textContent = "Copied"; }, function(){ cp.textContent = "Select and copy"; }); } catch (e) { cp.textContent = "Select and copy"; } };
+          } else {
+            show(out, "<b>" + (x.j.status === "exists" ? "You are already on the list." : "You are on the waitlist.") + "</b> " + (x.j.message || ""));
+          }
+          f.hidden = true;
+        })
+        .catch(function(e){ show(out, "<span class='err'>" + String(e.message || "Something went wrong.").replace(/[<>]/g, "") + "</span>"); })
+        .then(function(){ btn.disabled = false; btn.textContent = old; });
+    });
+  }
+  function show(el, html){ el.innerHTML = html; el.hidden = false; }
+  wire("joinForm", "result"); wire("joinForm2", "result2");
+})();
+</script>
+</body>
+</html>
