@@ -20,7 +20,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const r = await fetch(decoded, {
+    let r = await fetch(decoded, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'application/json, text/plain, */*',
@@ -30,8 +30,19 @@ module.exports = async function handler(req, res) {
       },
       signal: AbortSignal.timeout(8000),
     });
+    if (r.status === 429 && decoded.includes('//query1.')) {
+      // rate-limited on one Yahoo host → try the sibling host once
+      r = await fetch(decoded.replace('//query1.', '//query2.'), { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': 'application/json' }, signal: AbortSignal.timeout(6000) });
+    }
     if (!r.ok) return res.status(r.status).json({ error: `Yahoo returned ${r.status}` });
     const data = await r.json();
+    // Short edge cache for chart candles: repeat loads and timeframe switches skip Yahoo entirely
+    if (decoded.includes('/v8/finance/chart/')) {
+      const intraday = /[?&]interval=(1m|2m|5m|15m|30m|60m|90m|1h)/.test(decoded);
+      res.setHeader('Cache-Control', intraday
+        ? 'public, s-maxage=10, stale-while-revalidate=30'
+        : 'public, s-maxage=60, stale-while-revalidate=300');
+    }
     return res.status(200).json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });
