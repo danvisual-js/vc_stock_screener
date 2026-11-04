@@ -2934,7 +2934,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,h
   const ch=pct(p||0,pc||1);
   return(
     <div className="lr-wrap" style={{borderBottom:`1px solid ${T.border}`,background:selected?T.accentBg:"transparent"}}>
-    <div onClick={onClick} style={{display:"flex",alignItems:"center",padding:"10px 16px 10px 14px",cursor:"pointer",transition:"background 0.1s",gap:10,minHeight:48}}>
+    <div onClick={onClick} style={{display:"flex",alignItems:"center",flexWrap:"wrap",rowGap:6,padding:"10px 14px 10px 14px",cursor:"pointer",transition:"background 0.1s",columnGap:10,minHeight:48}}>
       <div style={{flex:"1 1 72px",minWidth:72}}>
         <div style={{fontFamily:T.sans,fontSize:13,fontWeight:700,color:T.text,whiteSpace:"nowrap"}}>{s}</div>
         <div style={{fontSize:10,color:T.textSub,fontFamily:T.sans,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{ld?"Fetching…":(names[s]||s)}</div>
@@ -2943,10 +2943,12 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,h
       <div style={{textAlign:"right",minWidth:60}}>
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
       </div>
+      <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8,flex:"0 1 auto",marginLeft:"auto",justifyContent:"flex-end",minWidth:0}}>
       {earn&&<EarnChip e={earn} T={T}/>}
       {!ld&&<HealthBadge h={health} T={T}/>}
       {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
-      {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}><I.X s={10}/></button>}
+      {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} aria-label={"Remove "+s} style={{padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}><I.X s={10}/></button>}
+      </div>
     </div>
     </div>
   );
@@ -3934,7 +3936,7 @@ function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,deta
                   )}
                 </div>
             ))}
-            {busy&&<div className="cc-msg" style={{alignSelf:"flex-start",width:"min(100%,420px)",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 13px"}}><div className="cc-dots" aria-hidden="true" style={{marginBottom:6}}><span/><span/><span/></div><LoadTimer T={T} compact label="Checking live data and the news" expected={14}/></div>}
+            {busy&&<div className="cc-msg" style={{alignSelf:"flex-start",width:"min(100%,420px)",padding:"4px 2px"}}><div className="cc-dots" aria-hidden="true" style={{marginBottom:6}}><span/><span/><span/></div><LoadTimer T={T} compact label="Checking live data and the news" expected={14}/></div>}
             <div ref={endRef}/>
           </div>
           {!embedded&&<div style={{padding:"10px 16px 12px",borderTop:`1px solid ${T.border}`}}>{entry}</div>}
@@ -4184,18 +4186,22 @@ function SectionNav({T,sec,onSelect,badges,mobile}){
     );
   }
   return(
-    <div role="tablist" aria-label="Sections" style={{position:"sticky",top:0,zIndex:30,background:T.bg,display:"flex",gap:2,overflowX:"auto",borderBottom:`1px solid ${T.border}`,margin:"0 0 14px",padding:"6px 0 0",scrollbarWidth:"none"}}>
-      {SECTIONS.map(x=>{
+    <div style={{position:"sticky",top:0,zIndex:30,background:T.bg,padding:"6px 0 12px"}}>
+    <div role="tablist" aria-label="Sections" style={{display:"grid",gridTemplateColumns:`repeat(${SECTIONS.length},minmax(0,1fr))`,gap:0,background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,boxShadow:T.shadow,overflow:"hidden"}}>
+      {SECTIONS.map((x,i)=>{
         const on=sec===x.id;
         const b=badges&&badges[x.id];
+        const col=on?T.accent:T.textSub;
         return(
-          <button key={x.id} role="tab" aria-selected={on} onClick={()=>onSelect(x.id)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:7,padding:"10px 14px",border:"none",background:"transparent",color:on?T.accent:T.textSub,fontWeight:on?600:500,fontSize:13,cursor:"pointer",borderBottom:`2px solid ${on?T.accent:"transparent"}`,marginBottom:-1,fontFamily:T.sans,whiteSpace:"nowrap"}}>
-            <NavIcon k={x.id} c={on?T.accent:T.textSub}/>
-            {x.label}
-            {b?<span style={{fontSize:10,fontWeight:700,minWidth:16,height:16,lineHeight:"16px",textAlign:"center",padding:"0 5px",borderRadius:4,fontFamily:T.mono,background:on?T.accentBg:T.surfaceB,color:on?T.accent:T.textSub,border:`1px solid ${T.border}`}}>{b}</span>:null}
+          <button key={x.id} role="tab" aria-selected={on} onClick={()=>onSelect(x.id)} className="top-tab" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,padding:"10px 6px 9px",minHeight:58,border:"none",borderLeft:i?`1px solid ${T.border}`:"none",background:on?T.accentBg:"transparent",color:col,cursor:"pointer",fontFamily:T.sans,fontSize:11,fontWeight:on?700:500,whiteSpace:"nowrap",transition:"background .15s,color .15s"}}>
+            <NavIcon k={x.id} c={col}/>
+            <span>{x.label}</span>
+            {b?<span style={{position:"absolute",top:7,left:"calc(50% + 10px)",fontSize:9,fontWeight:700,minWidth:15,height:15,lineHeight:"15px",textAlign:"center",padding:"0 4px",borderRadius:4,fontFamily:T.mono,background:T.accent,color:T.accentInk}}>{b}</span>:null}
+            {on&&<span style={{position:"absolute",top:0,left:"24%",right:"24%",height:2,borderRadius:2,background:T.accent}}/>}
           </button>
         );
       })}
+    </div>
     </div>
   );
 }
@@ -4442,7 +4448,7 @@ export default function StockScreener(){
   const timeSince=lastRefresh?`Updated ${lastRefresh.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}`:"";
 
   const StockList=(
-    <div style={{maxHeight:isMobile?"none":"52vh",overflowY:"auto"}}>
+    <div style={{maxHeight:isMobile?"none":"62vh",overflowY:"auto",paddingRight:isMobile?0:12,scrollbarGutter:isMobile?"auto":"stable"}}>
       {showFilters&&(
         <div style={{display:"flex",gap:6,padding:"10px 12px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,marginRight:4}}>Filter by change</span>
@@ -4486,6 +4492,11 @@ export default function StockScreener(){
         ::-webkit-scrollbar-thumb{background:${T.border};border-radius:2px}
         input::placeholder{color:${T.textSub}}
         .lr-wrap{container-type:inline-size}
+        .pill:hover{filter:brightness(1.08);transform:translateY(-1px)}
+        .pill:active{transform:scale(.97)}
+        .pill-x:hover{background:rgba(220,60,60,.18)!important;color:#E5484D!important}
+        .top-tab:hover{background:rgba(127,127,160,.10)}
+        @media (prefers-reduced-motion:reduce){.pill:hover,.pill:active{transform:none}}
         @container (max-width:470px){.lr-spark{display:none!important}}
         .cc-chip{transition:transform .15s ease,background .15s ease,border-color .15s ease,color .15s ease;will-change:transform}
         .cc-chip:not(:disabled):hover{transform:translateY(-2px);background:${T.accentBg}!important;border-color:${T.accent}!important;color:${T.accent}!important}
@@ -4558,29 +4569,26 @@ export default function StockScreener(){
       </div>
 
       <div role="tabpanel" style={{display:sec==="watchlist"?"block":"none"}}>
-      {/* ── TABS (underline style) ─────────────── */}
-      <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:0,overflowX:"auto",borderBottom:`1px solid ${T.border}`}}>
-        {tabs.map(t=>(
-          <div key={t.id} style={{display:"flex",alignItems:"center",flexShrink:0}}>
-            <button onClick={()=>{setActiveTab(t.id);setSelected(null);}} style={{
-              padding:"10px 14px",border:"none",background:"transparent",
-              color:activeTab===t.id?T.accent:T.textSub,
-              fontWeight:activeTab===t.id?700:400,fontSize:13,cursor:"pointer",
-              borderBottom:`2px solid ${activeTab===t.id?T.accent:"transparent"}`,
-              marginBottom:-1,transition:"all 0.12s",fontFamily:T.sans,whiteSpace:"nowrap",
-            }}>{t.label}</button>
-            {activeTab===t.id&&tabs.length>1&&<button onClick={()=>removeTab(t.id)} style={{padding:"1px 4px",borderRadius:3,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer",marginLeft:-6}}><I.X s={10}/></button>}
-          </div>
-        ))}
+      {/* ── LIST PILLS ─────────────── */}
+      <div role="tablist" aria-label="Watchlists" style={{display:"flex",alignItems:"center",gap:8,padding:"2px 2px 10px",overflowX:"auto",scrollbarWidth:"none"}}>
+        {tabs.map(t=>{
+          const on=activeTab===t.id;
+          return(
+            <div key={t.id} className="pill" style={{display:"inline-flex",alignItems:"center",flexShrink:0,borderRadius:999,border:`1px solid ${on?T.accent:T.border}`,background:on?T.accentBg:T.surface,color:on?T.accent:T.textSub,transition:"all .15s"}}>
+              <button role="tab" aria-selected={on} onClick={()=>{setActiveTab(t.id);setSelected(null);}} style={{padding:on&&tabs.length>1?"6px 6px 6px 14px":"6px 14px",border:"none",background:"transparent",color:"inherit",fontWeight:on?700:500,fontSize:12,cursor:"pointer",fontFamily:T.sans,whiteSpace:"nowrap",borderRadius:999}}>{t.label}</button>
+              {on&&tabs.length>1&&<button onClick={()=>removeTab(t.id)} aria-label={"Delete list "+t.label} title="Delete list" className="pill-x" style={{width:22,height:22,margin:"0 5px 0 0",display:"inline-flex",alignItems:"center",justifyContent:"center",borderRadius:"50%",border:"none",background:"transparent",color:"inherit",cursor:"pointer",padding:0}}><I.X s={10}/></button>}
+            </div>
+          );
+        })}
         {!addingTab
-          ?<button onClick={()=>setAddingTab(true)} style={{padding:"10px 12px",border:"none",background:"transparent",color:T.textSub,fontSize:12,cursor:"pointer",flexShrink:0}}>+ Add</button>
-          :<div style={{display:"flex",gap:4,alignItems:"center",padding:"6px 8px",flexShrink:0}}>
+          ?<button className="pill" onClick={()=>setAddingTab(true)} style={{flexShrink:0,padding:"6px 14px",borderRadius:999,border:`1px dashed ${T.textSub}`,background:"transparent",color:T.textSub,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:T.sans}}>+ New list</button>
+          :<div style={{display:"inline-flex",gap:6,alignItems:"center",flexShrink:0,padding:"3px 4px 3px 10px",borderRadius:999,border:`1px solid ${T.accent}`,background:T.surface}}>
             <input value={newTabName} onChange={e=>setNewTabName(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter")addTab();if(e.key==="Escape")setAddingTab(false);}}
-              placeholder="Name…" autoFocus
-              style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:11,width:80,outline:"none",fontFamily:T.sans}}/>
-            <button onClick={addTab} style={{padding:"4px 9px",borderRadius:6,border:"none",background:T.accent,color:"#fff",fontSize:11,cursor:"pointer",fontFamily:T.sans}}>Add</button>
-            <button onClick={()=>setAddingTab(false)} style={{padding:"4px 7px",borderRadius:6,border:"none",background:"transparent",color:T.textSub,fontSize:11,cursor:"pointer"}}><I.X s={10}/></button>
+              placeholder="List name" autoFocus aria-label="New list name"
+              style={{border:"none",background:"transparent",color:T.text,fontSize:12,width:90,outline:"none",fontFamily:T.sans}}/>
+            <button onClick={addTab} style={{padding:"4px 11px",borderRadius:999,border:"none",background:T.accent,color:T.accentInk,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.sans}}>Add</button>
+            <button onClick={()=>setAddingTab(false)} aria-label="Cancel" style={{width:22,height:22,borderRadius:"50%",border:"none",background:"transparent",color:T.textSub,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}><I.X s={10}/></button>
           </div>
         }
       </div>
@@ -4622,7 +4630,7 @@ export default function StockScreener(){
         ):StockList
       ):(
         <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
-          <div style={{width:selected?255:"100%",flexShrink:0,transition:"width 0.18s"}}>{StockList}</div>
+          <div style={{width:selected?"clamp(330px,34%,420px)":"100%",flexShrink:0,transition:"width 0.18s"}}>{StockList}</div>
           {selected&&<div id="stock-detail" style={{flex:1,minWidth:0}}><StockDetail selected={selected} names={names} T={T} onClose={()=>setSelected(null)} onSetAlert={()=>setAlertModal({symbol:selected.s,price:selected.p})} health={healthMap[selected.s]} healthLoading={fundLoading} autoAnalyze={autoSym===selected.s}/></div>}
         </div>
       )}
