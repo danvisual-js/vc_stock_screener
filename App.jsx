@@ -761,18 +761,74 @@ async function fetchYFChart(symbol, tf){
     else if(multiDay&&!isExtended&&dayLabel!==prevDayStr){label=dayLabel;}
     else{label=timeLabel;}
     if(!isExtended)prevDayStr=dayLabel;
-    return{date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
+    return{ts:t,date:label,open:+open.toFixed(4),close:+close.toFixed(4),high:+high.toFixed(4),low:+low.toFixed(4),volume,isGreen:close>=open,isExtended};
   }).filter(Boolean);
   if(bars.length<=5)throw new Error("too few bars");
   return bars;
   };
   // Promise.any: try all URLs in parallel, use first success
   try{
-    const attempts=[processChart(base)];
-    if(prePost)attempts.push(processChart(base+"&includePrePost=true"));
-    return await Promise.any(attempts);
+    // One request in the normal case (fewer hits on Yahoo's rate limit); fall back to the plain URL
+    if(prePost){try{return await processChart(base+"&includePrePost=true");}catch{}}
+    return await processChart(base);
   }catch{return null;}
 }
+/* ── Chart cache: instant timeframe switching ───────────────────────────
+   Daily ranges (1W…1Y) share ONE 1-year daily fetch and are sliced locally.
+   Fresh hits return instantly, stale hits are shown immediately and refreshed
+   in the background, and concurrent requests for the same key are de-duplicated. */
+const CH_CACHE=new Map(),CH_INFLIGHT=new Map();
+const DAILY_TFS=["1W","1M","3M","6M","1Y"];
+const DAILY_N={"1W":5,"1M":21,"3M":63,"6M":126,"1Y":9999};
+const chKey=(sym,tf)=>sym+"|"+(DAILY_TFS.includes(tf)?"D":tf);
+const chTTL=tf=>(YF_TF[tf]?.barMin||5)<1440?20000:240000;
+const chCut=(bars,tf)=>DAILY_TFS.includes(tf)?bars.slice(-DAILY_N[tf]):bars;
+function peekChart(sym,tf){
+  const h=CH_CACHE.get(chKey(sym,tf));if(!h)return null;
+  return{bars:chCut(h.bars,tf),fresh:Date.now()-h.at<chTTL(tf)};
+}
+async function getChart(sym,tf,opt){
+  const force=!!(opt&&opt.force);
+  const key=chKey(sym,tf);const hit=CH_CACHE.get(key);
+  if(hit&&!force&&Date.now()-hit.at<chTTL(tf))return chCut(hit.bars,tf);
+  let pr=CH_INFLIGHT.get(key);
+  if(!pr){
+    pr=fetchYFChart(sym,DAILY_TFS.includes(tf)?"1Y":tf).then(b=>{
+      if(b&&b.length>5){
+        CH_CACHE.set(key,{bars:b,at:Date.now()});
+        if(CH_CACHE.size>70)CH_CACHE.delete(CH_CACHE.keys().next().value);
+      }
+      return b;
+    }).finally(()=>CH_INFLIGHT.delete(key));
+    CH_INFLIGHT.set(key,pr);
+  }
+  const b=await pr;
+  if(b&&b.length>5)return chCut(b,tf);
+  return hit?chCut(hit.bars,tf):null;
+}
+let PF_TOK=0;
+function prefetchCharts(sym){
+  const tok=++PF_TOK;
+  const q=["1Y","15m","1m","1h"];
+  const worker=async()=>{while(q.length&&tok===PF_TOK){const t=q.shift();let ok=null;try{ok=await getChart(sym,t);}catch{}if(!ok)break;await new Promise(r=>setTimeout(r,500));}};
+  worker();
+}
+const sameBars=(a,b)=>{
+  if(a===b)return true;if(!a||!b||a.length!==b.length||!a.length)return false;
+  const x=a[a.length-1],y=b[b.length-1];
+  return x.ts===y.ts&&x.close===y.close&&x.high===y.high&&x.low===y.low&&x.volume===y.volume&&a[0].ts===b[0].ts;
+};
+// Zoom-driven resolution ladder (TradingView / Robinhood style)
+function nextRes(tf,dir){
+  if(DAILY_TFS.includes(tf)){
+    if(dir==="in")return"1h";
+    return DAILY_TFS[DAILY_TFS.indexOf(tf)+1]||null;
+  }
+  if(tf==="4h")return dir==="in"?"30m":"6M";
+  const L=["1m","5m","15m","30m","1h"];const i=L.indexOf(tf);if(i<0)return null;
+  return dir==="in"?(L[i-1]||null):(L[i+1]||"6M");
+}
+const tfName=t=>DAILY_TFS.includes(t)?"daily":t;
 async function fetchPrices(symbols){
   if(!symbols.length)return{};
   // Use today's actual date so Claude knows it must search, not use training data
@@ -1052,10 +1108,14 @@ function buildVolumeProfile(data, buckets=30){
 const CC_VW=900,CC_VH=210,CC_PAD={t:8,r:44,b:22,l:54};
 const CC_W=CC_VW-CC_PAD.l-CC_PAD.r, CC_H=CC_VH-CC_PAD.t-CC_PAD.b;
 
-function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T,chartH=CC_VH}){
-  // Dynamic VH/H based on chartH prop — allows mobile to pass taller value
-  const VW=CC_VW, VH=chartH, Pad=CC_PAD;
+function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T,chartH=CC_VH,fs=1,big=false,onHover,hideTip,onRes,initWin,canFiner=true,canCoarser=true}){
+  // 1:1 pixel SVG: width follows the container, height is chartH px, so text stays crisp and readable
+  const [boxW,setBoxW]=useState(0);
+  const bandH=big?(boxW>0&&boxW<560?82:44):0;
+  const Pad=big?{t:10,r:52,b:26+bandH,l:64}:CC_PAD;
+  const VW=boxW>50?boxW:CC_VW, VH=chartH;
   const W=VW-Pad.l-Pad.r, H=VH-Pad.t-Pad.b;
+  const F=n=>Math.round(n*1.15*fs*10)/10;
   const [vS,setVS]=useState(0);
   const [vE,setVE]=useState(()=>data.length);
   const drag=useRef({on:false,x0:0,s0:0,e0:0});
@@ -1063,20 +1123,67 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const activePtr=useRef(new Map()); // pointerId → {x,y}
   const pinchRef=useRef(null);       // {startDist, startVS, startVE}
   const divRef=useRef(null);
-  const dsKey=`${data.length}|${data[0]?.date}|${data.at?.(-1)?.date}`;
-  useEffect(()=>{setVS(0);setVE(data.length);},[dsKey]);// eslint-disable-line
+  useEffect(()=>{
+    const el=divRef.current;if(!el)return undefined;
+    setBoxW(Math.round(el.getBoundingClientRect().width));
+    if(typeof ResizeObserver==="undefined")return undefined;
+    const ro=new ResizeObserver(en=>{const w=Math.round(en[0].contentRect.width);setBoxW(p=>Math.abs(p-w)>1?w:p);});
+    ro.observe(el);return()=>ro.disconnect();
+  },[]);
   const vStart=Math.max(0,Math.min(vS,data.length-5));
   const vEnd=Math.max(vStart+5,Math.min(vE,data.length));
   const visData=data.slice(vStart,vEnd);
   const isZoomed=vStart>0||vEnd<data.length;
+  // Zoom survives live updates: only a new symbol / timeframe resets (or re-targets) the view
+  const ident=symbol+"|"+tf;
+  const prevId=useRef(ident),prevLen=useRef(data.length);
+  useEffect(()=>{
+    const idChanged=prevId.current!==ident,pl=prevLen.current;
+    prevId.current=ident;prevLen.current=data.length;
+    if(idChanged||pl<=6){
+      if(initWin&&data[0]&&data[0].ts){
+        let si=data.findIndex(d=>d.ts>=initWin.t0);if(si<0)si=0;
+        let ei=data.length;for(let i=data.length-1;i>=0;i--){if(data[i].ts<=initWin.t1){ei=i+1;break;}}
+        if(ei-si>=6){setVS(si);setVE(ei);return;}
+      }
+      setVS(0);setVE(data.length);return;
+    }
+    if(data.length!==pl){
+      if(vEnd>=pl){ // pinned to the live edge → follow it
+        const nv=vEnd-vStart;
+        if(vStart===0&&vEnd>=pl){setVS(0);setVE(data.length);}
+        else{setVS(Math.max(0,data.length-nv));setVE(data.length);}
+      }
+    }
+  },[ident,data.length]);// eslint-disable-line
+  // Auto-resolution: asking the chart to zoom past its detail → request finer / coarser candles
+  const resRef=useRef({});resRef.current={onRes,canCoarser};
+  const outAt=useRef(0);
+  const tryOut=()=>{const r=resRef.current;if(!r.onRes||!r.canCoarser)return;const n=Date.now();if(n-outAt.current<1200)return;outAt.current=n;r.onRes("out",null);};
+  const visN=vEnd-vStart;
+  useEffect(()=>{
+    if(!onRes||!canFiner||!data[0]||!data[0].ts)return undefined;
+    if(visN>24||visN>=data.length*0.6)return undefined;
+    const id=setTimeout(()=>{
+      let step=0;for(let i=vStart+1;i<vEnd;i++){const d=data[i].ts-data[i-1].ts;if(d>0&&(!step||d<step))step=d;}
+      onRes("in",{t0:data[vStart].ts,t1:data[vEnd-1].ts+(step||60)});
+    },280);
+    return()=>clearTimeout(id);
+  },[visN,vStart,vEnd,canFiner,data,onRes]);
   const onWheel=useCallback((e)=>{
     e.preventDefault();
-    const vis=vEnd-vStart,dir=e.deltaY>0?1:-1;
+    const vis=vEnd-vStart,dir=e.deltaY<0?1:-1;
+    if(dir<0&&vis>=data.length){tryOut();return;}
     const amt=Math.max(1,Math.floor(vis*0.12));
     const rect=divRef.current?.getBoundingClientRect();
     const ratio=rect?(e.clientX-rect.left)/rect.width:0.5;
     const dl=Math.round(amt*ratio),dr=amt-dl;
-    const ns=Math.max(0,vStart+dir*dl),ne=Math.min(data.length,vEnd-dir*dr);
+    let ns=vStart+dir*dl,ne=vEnd-dir*dr;
+    if(dir<0){ // zooming out: if one edge is already at the limit, give the shortfall to the other side
+      if(ns<0){ne-=ns;ns=0;}
+      if(ne>data.length){ns-=ne-data.length;ne=data.length;}
+      ns=Math.max(0,ns);ne=Math.min(data.length,ne);
+    }else{ns=Math.max(0,ns);ne=Math.min(data.length,ne);}
     if(ne-ns>=5){setVS(ns);setVE(ne);}
   },[vStart,vEnd,data.length]);
   useEffect(()=>{const el=divRef.current;if(!el)return;el.addEventListener("wheel",onWheel,{passive:false});return()=>el.removeEventListener("wheel",onWheel);},[onWheel]);
@@ -1084,6 +1191,8 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onMM=(e)=>{if(!drag.current.on)return;const rect=divRef.current?.getBoundingClientRect();if(!rect)return;const vis=drag.current.e0-drag.current.s0;const sh=Math.round((drag.current.x0-e.clientX)/(rect.width/vis));const ns=Math.max(0,drag.current.s0+sh);const ne=Math.min(data.length,drag.current.e0+sh);if(ne-ns===vis){setVS(ns);setVE(ne);}};
   const onMU=(e)=>{drag.current.on=false;if(e.currentTarget)e.currentTarget.style.cursor="default";};
   const resetZoom=()=>{setVS(0);setVE(data.length);};
+  const zoomBy=(f)=>{const vis=vEnd-vStart;if(f>1&&vis>=data.length){tryOut();return;}const nv=Math.max(6,Math.min(data.length,Math.round(vis*f)));let ns=Math.round((vStart+vEnd)/2-nv/2);ns=Math.max(0,Math.min(data.length-nv,ns));setVS(ns);setVE(ns+nv);};
+  const panBy=(f)=>{const vis=vEnd-vStart;const sh=Math.round(vis*f);const ns=Math.max(0,Math.min(data.length-vis,vStart+sh));setVS(ns);setVE(ns+vis);};
 
 
 
@@ -1094,6 +1203,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const [drawMode,setDrawMode]=useState(null);
   const [drawStart,setDrawStart]=useState(null);
   const [selDraw,setSelDraw]=useState(null);
+  const [measure,setMeasure]=useState(null);
   const [draggingDraw,setDraggingDraw]=useState(null); // {id,startSvgX,startSvgY,orig}
   const chartRange=useRef({minP:0,rng:1}); // updated after minP computed
 
@@ -1105,16 +1215,16 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
     const clientX=e.touches?.[0]?.clientX??e.changedTouches?.[0]?.clientX??e.clientX;
     const clientY=e.touches?.[0]?.clientY??e.changedTouches?.[0]?.clientY??e.clientY;
     // Convert screen px → SVG units using actual chartH (not the 210 constant)
-    const svgX=(clientX-rect.left)/rect.width*CC_VW;
-    const svgY=(clientY-rect.top)/rect.height*chartH; // chartH not CC_VH — critical for mobile
-    const barAbsIdx=Math.round((svgX-CC_PAD.l)/CC_W*visData.length)+vStart;
-    const svgH=chartH-CC_PAD.t-CC_PAD.b;
-    const price=chartRange.current.minP+(1-(svgY-CC_PAD.t)/svgH)*chartRange.current.rng;
+    const svgX=(clientX-rect.left)/rect.width*VW;
+    const svgY=(clientY-rect.top)/rect.height*chartH; // chartH not @@VH@@ — critical for mobile
+    const barAbsIdx=Math.round((svgX-Pad.l)/W*visData.length)+vStart;
+    const svgH=chartH-Pad.t-Pad.b;
+    const price=chartRange.current.minP+(1-(svgY-Pad.t)/svgH)*chartRange.current.rng;
     return{svgX,svgY,barAbsIdx,price};
-  },[vStart,visData.length,chartH]);
+  },[vStart,visData.length,chartH,VW]);
 
   const onChartClick=useCallback((e)=>{
-    if(!drawMode)return;
+    if(!drawMode){if(measure)setMeasure(null);return;}
     const pos=svgPos(e);if(!pos||isNaN(pos.price)||pos.price<=0)return;
     if(drawMode==='hline'){
       setDrawings(prev=>[...prev,{id:Date.now(),type:'hline',price:pos.price,color:'#A78BFA'}]);
@@ -1122,8 +1232,11 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
     } else if(drawMode==='trend'){
       if(!drawStart)setDrawStart({barIdx:pos.barAbsIdx,price:pos.price});
       else{setDrawings(prev=>[...prev,{id:Date.now(),type:'trend',p1:drawStart,p2:{barIdx:pos.barAbsIdx,price:pos.price},color:'#6366F1'}]);setDrawStart(null);setDrawMode(null);}
+    } else if(drawMode==='measure'){
+      if(!drawStart)setDrawStart({barIdx:pos.barAbsIdx,price:pos.price});
+      else{setMeasure({p1:drawStart,p2:{barIdx:pos.barAbsIdx,price:pos.price}});setDrawStart(null);setDrawMode(null);}
     }
-  },[drawMode,drawStart,svgPos]);
+  },[drawMode,drawStart,svgPos,measure]);
 
   // Drag-to-move handlers (TradingView-style)
   const onDrawingMouseDown=useCallback((e,drawing)=>{
@@ -1137,8 +1250,8 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const onDrawingMouseMove=useCallback((e)=>{
     if(!draggingDraw)return;
     const pos=svgPos(e);if(!pos)return;
-    const vhRef=chartH-CC_PAD.t-CC_PAD.b;const dprice=(draggingDraw.startSvgY-pos.svgY)/vhRef*chartRange.current.rng;
-    const dbar=Math.round((pos.svgX-draggingDraw.startSvgX)/CC_W*visData.length);
+    const vhRef=chartH-Pad.t-Pad.b;const dprice=(draggingDraw.startSvgY-pos.svgY)/vhRef*chartRange.current.rng;
+    const dbar=Math.round((pos.svgX-draggingDraw.startSvgX)/W*visData.length);
     const{orig}=draggingDraw;
     setDrawings(prev=>prev.map(d=>{
       if(d.id!==draggingDraw.id)return d;
@@ -1146,7 +1259,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       if(d.type==='trend')return{...d,p1:{barIdx:orig.p1.barIdx+dbar,price:orig.p1.price+dprice},p2:{barIdx:orig.p2.barIdx+dbar,price:orig.p2.price+dprice}};
       return d;
     }));
-  },[draggingDraw,svgPos,visData.length]);
+  },[draggingDraw,svgPos,visData.length,VW]);
 
   const onDrawingMouseUp=useCallback(()=>setDraggingDraw(null),[]);
 
@@ -1158,11 +1271,12 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
     rafRef.current=requestAnimationFrame(()=>{
       const rect=divRef.current?.getBoundingClientRect();
       if(!rect)return;
-      const svgX=(e.clientX-rect.left)/rect.width*CC_VW;
-      const idx=Math.floor((svgX-CC_PAD.l)/CC_W*visData.length);
+      const svgX=(e.clientX-rect.left)/rect.width*VW;
+      const idx=Math.floor((svgX-Pad.l)/W*visData.length);
       setHoverI(idx>=0&&idx<visData.length?idx:null);
     });
-  },[visData.length]);
+  },[visData.length,VW]);
+  useEffect(()=>{if(onHover)onHover(hoverI!=null&&visData[hoverI]?visData[hoverI]:null);},[hoverI]);// eslint-disable-line
   const onSVGLeave=()=>{if(rafRef.current)cancelAnimationFrame(rafRef.current);setHoverI(null);};
 
   // ── Pinch-to-zoom + touch-drag (pointer-based, works on all devices) ─────
@@ -1189,6 +1303,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       const scale=pinchRef.current.startDist/Math.max(d,1);
       const vis0=pinchRef.current.startVE-pinchRef.current.startVS;
       const newVis=Math.min(data.length,Math.max(6,Math.round(vis0*scale)));
+      if(scale>1.12&&newVis>=data.length)tryOut();
       const mid=Math.round((pinchRef.current.startVS+pinchRef.current.startVE)/2);
       const ns=Math.max(0,mid-Math.floor(newVis/2));
       const ne=Math.min(data.length,ns+newVis);
@@ -1237,14 +1352,14 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
   const step=Math.max(1,Math.round(visData.length/7));
 
   // Pre-compute drawing previews (avoids IIFE-inside-JSX Babel issues)
-  const trendPrev=(drawMode==='trend'&&drawStart&&hoverI!=null&&visData[hoverI])?{
+  const trendPrev=((drawMode==='trend'||drawMode==='measure')&&drawStart&&hoverI!=null&&visData[hoverI])?{
     x1:Pad.l+(drawStart.barIdx-vStart+0.5)*(W/visData.length),
     y1:sy(drawStart.price),
     x2:sx(hoverI),y2:sy(visData[hoverI].close)
   }:null;
   const hlinePrevY=(drawMode==='hline'&&hoverI!=null&&visData[hoverI])?sy(visData[hoverI].close):null;
-  const yTicks=Array.from({length:4},(_,i)=>minP+(rng/3)*i);
-  const fY=p=>p>=10000?(p/1000).toFixed(0)+"K":p>=100?p.toFixed(0):p<1?p.toFixed(3):p.toFixed(2);
+  const nT=Math.max(4,Math.round(H/(big?58:52)));const yTicks=Array.from({length:nT},(_,i)=>minP+(rng/(nT-1))*i);
+  const fY=p=>p>=10000?(p/1000).toFixed(big?1:0)+"K":p>=100?p.toFixed(big?2:0):p<1?p.toFixed(3):p.toFixed(2);
   const eLine=(key,color,dash,w=1.2)=>{let seg=[],segs=[];visData.forEach((d,i)=>{if(d[key]!=null)seg.push(`${sx(i)},${sy(d[key])}`);else if(seg.length){segs.push(seg.join(" "));seg=[];}});if(seg.length)segs.push(seg.join(" "));return segs.map((pts,si)=><polyline key={`${key}-${si}`} points={pts} fill="none" stroke={color} strokeWidth={w} strokeDasharray={dash} opacity={0.9}/>);};
   return(
     <div ref={divRef}
@@ -1253,31 +1368,42 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       onPointerUp={onPtrUp} onPointerLeave={onPtrLeave} onPointerCancel={onPtrUp}
       onDoubleClick={resetZoom} onClick={onChartClick}>
       {isZoomed&&<div onClick={resetZoom} style={{position:"absolute",top:6,right:50,zIndex:10,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 8px",fontSize:9,color:"#00D4AA",cursor:"pointer",fontWeight:700,fontFamily:"monospace"}}>↺ {visData.length}/{data.length}</div>}
+      {big&&<div onClick={e=>e.stopPropagation()} onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:6,left:Pad.l+4,zIndex:10,display:"flex",gap:4}}>
+        {[["−",()=>zoomBy(1.4),"Zoom out"],["+",()=>zoomBy(0.7),"Zoom in"],["‹",()=>panBy(-0.3),"Pan left"],["›",()=>panBy(0.3),"Pan right"],["↺",resetZoom,"Reset"]].map(([l,fn,t])=>(
+          <button key={t} onClick={fn} title={t} aria-label={t} style={{minWidth:36,height:36,borderRadius:8,border:`1px solid ${T.border}`,background:`${T.surface}F2`,color:T.text,fontSize:16,fontWeight:700,cursor:"pointer",backdropFilter:"blur(4px)"}}>{l}</button>
+        ))}
+      </div>}
       {/* Drawing toolbar — always visible, prominent placement */}
-      <div style={{position:"absolute",bottom:28,left:CC_PAD.l+4,zIndex:10,display:"flex",gap:4,pointerEvents:"all"}}>
+      <div style={{position:"absolute",bottom:big?6:28,left:big?8:Pad.l+4,zIndex:10,display:"flex",flexWrap:"wrap",gap:4,pointerEvents:"all",maxWidth:big?Math.max(160,VW-16):Math.max(160,VW-Pad.l-Pad.r-8)}}>
         {(()=>{
           const mob=typeof window!=="undefined"&&window.innerWidth<640;
-          const bsz={padding:mob?"7px 14px":"4px 10px",fontSize:mob?13:11,minHeight:mob?44:undefined,minWidth:mob?80:undefined};
-          return [['hline','─','H-Line','#A78BFA'],['trend','/','Trend','#6366F1']].map(([mode,ico,lbl,col])=>(
+          const bsz={padding:mob?"6px 10px":"4px 10px",fontSize:mob?12:11,minHeight:mob?34:undefined};
+          return [['trend','/','Trend','#6366F1'],['hline','─','H-Line','#A78BFA'],['measure','↔','Measure','#F59E0B']].map(([mode,ico,lbl,col])=>(
             <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
-              title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point to finish":lbl}
+              title={drawStart&&drawMode===mode?"Tap the second point to finish":lbl}
               style={{...bsz,fontWeight:700,borderRadius:8,border:`1.5px solid ${drawMode===mode?col:T.border}`,
                 background:drawMode===mode?`${col}22`:`${T.surface}F2`,
                 color:drawMode===mode?col:T.text,cursor:"pointer",
                 boxShadow:drawMode===mode?`0 0 0 1px ${col}40`:"none",
                 backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
               <span style={{fontSize:mob?16:13,lineHeight:1}}>{ico}</span>
-              <span>{drawMode===mode?(mode==='trend'&&drawStart?"pt2…":lbl+" ✓"):lbl}</span>
+              <span>{drawMode===mode?(mode!=='hline'&&drawStart?"pt 2…":lbl+" ✓"):lbl}</span>
             </button>
           ));
         })()}
         {drawings.length>0&&(()=>{
           const mob=typeof window!=="undefined"&&window.innerWidth<640;
+          return(<button onClick={e=>{e.stopPropagation();setDrawings(p=>p.slice(0,-1));setSelDraw(null);}}
+            title="Undo last drawing"
+            style={{padding:mob?"6px 10px":"4px 10px",fontSize:mob?12:11,fontWeight:700,borderRadius:8,border:`1.5px solid ${T.border}`,background:`${T.surface}F2`,color:T.text,cursor:"pointer",backdropFilter:"blur(4px)",minHeight:mob?34:undefined}}>↶ Undo</button>);
+        })()}
+        {drawings.length>0&&(()=>{
+          const mob=typeof window!=="undefined"&&window.innerWidth<640;
           return(<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
             title="Clear all drawings"
-            style={{padding:mob?"7px 14px":"4px 10px",fontSize:mob?13:10,fontWeight:700,borderRadius:8,
+            style={{padding:mob?"6px 10px":"4px 10px",fontSize:mob?12:10,fontWeight:700,borderRadius:8,
               border:`1.5px solid ${T.border}`,background:`${T.surface}F2`,
-              color:T.down,cursor:"pointer",backdropFilter:"blur(4px)",minHeight:mob?44:undefined}}>
+              color:T.down,cursor:"pointer",backdropFilter:"blur(4px)",minHeight:mob?34:undefined}}>
             ✕ Clear all
           </button>);
         })()}
@@ -1290,7 +1416,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
         // Position delete button near top-right of chart
         return(
           <div onClick={e=>{e.stopPropagation();setDrawings(prev=>prev.filter(x=>x.id!==selDraw));setSelDraw(null);}}
-            style={{position:"absolute",top:30,right:CC_PAD.r+6,zIndex:20,
+            style={{position:"absolute",top:30,right:Pad.r+6,zIndex:20,
               padding:"4px 10px",fontSize:11,fontWeight:700,borderRadius:6,
               border:`1.5px solid ${T.down}`,background:`${T.down}22`,
               color:T.down,cursor:"pointer",pointerEvents:"all",
@@ -1299,8 +1425,8 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
           </div>
         );
       })()}
-      <svg viewBox={`0 0 ${VW} ${VH}`} style={{width:"100%",display:"block"}}>
-        {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={9} dominantBaseline="middle">{fY(p)}</text></g>))}
+      <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height={VH} style={{display:"block"}}>
+        {yTicks.map((p,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(p)} y2={sy(p)} stroke={T.chartGrid} strokeDasharray="2,5" strokeWidth={0.8}/><text x={Pad.l-4} y={sy(p)} textAnchor="end" fill={T.textSub} fontSize={F(9)} dominantBaseline="middle">{fY(p)}</text></g>))}
         {/* Pre/after-hours shading — pre-computed, no IIFE */}
         {visExtBands.map((b,i)=>(
           <rect key={i}
@@ -1308,7 +1434,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
             width={(b.e-b.s+1)*(W/visData.length)} height={H}
             fill={b.pre?"#6366F1":"#94A3B8"} opacity={0.07}/>
         ))}
-        {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={8} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
+        {showSupport&&srLevels.map((z,i)=>(<g key={i}><line x1={Pad.l} x2={Pad.l+W} y1={sy(z.price)} y2={sy(z.price)} stroke={z.type==="support"?T.up:T.down} strokeDasharray="5,3" strokeWidth={1} opacity={0.4}/><text x={Pad.l+W+3} y={sy(z.price)} fill={z.type==="support"?T.up:T.down} fontSize={F(8)} dominantBaseline="middle">{z.type==="support"?"S":"R"}</text></g>))}
         {/* Session boundary lines + candles */}
         {visData.map((d,i)=>{
           const color=d.isGreen?T.up:T.down;
@@ -1334,8 +1460,8 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
         {showBB&&(()=>{const pts=(k)=>visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean);const up=pts("bbUpper"),lo=pts("bbLower");if(!up.length)return null;return(<g><path d={`M${up.join(" L")} L${lo.slice().reverse().join(" L")} Z`} fill="#A78BFA" fillOpacity={0.07}/>{[["bbUpper","#A78BFA","3,2"],["bbMiddle","#A78BFA50",""],["bbLower","#A78BFA","3,2"]].map(([k,c,dash])=>(<polyline key={k} points={visData.map((d,i)=>d[k]!=null?`${sx(i).toFixed(1)},${sy(d[k]).toFixed(1)}`:null).filter(Boolean).join(" ")} fill="none" stroke={c} strokeWidth={1} strokeDasharray={dash} opacity={0.9}/>))}</g>);})()}
         {showVWAP&&eLine("vwap","#60A5FA","",1.5)}
         {showSignals&&signals&&signals.map((sig,idx)=>{const vi=sig.i-vStart;if(vi<0||vi>=visData.length)return null;const bar=visData[vi];const cx=sx(vi);const isBuy=sig.dir==="buy";const stack=signals.filter(s=>s.i===sig.i&&s.dir===sig.dir).indexOf(sig);const sz=5,gap=10;const ty=isBuy?sy(bar.low)+gap+(stack*gap):sy(bar.high)-gap-(stack*gap);const tri=isBuy?`M${cx},${ty-sz} L${cx+sz},${ty+sz} L${cx-sz},${ty+sz} Z`:`M${cx},${ty+sz} L${cx+sz},${ty-sz} L${cx-sz},${ty-sz} Z`;const fill=isBuy?T.up:T.down;return(<g key={`sig-${idx}`}><path d={tri} fill={fill} opacity={0.9}><title>{sig.label}</title></path><line x1={cx} x2={cx} y1={isBuy?ty-sz-1:ty+sz+1} y2={isBuy?sy(bar.low)+2:sy(bar.high)-2} stroke={fill} strokeWidth={0.6} opacity={0.35} strokeDasharray="2,2"/></g>);})}
-        {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={7}>POC</text>);})()}
-        {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={VH-4} textAnchor="middle" fill={T.textSub} fontSize={7}>{d.date}</text>)}
+        {showVolProfile&&(()=>{const profile=buildVolumeProfile(visData,28);const maxV=Math.max(...profile.map(b=>b.vol),1);const POC=profile.reduce((a,b)=>b.vol>a.vol?b:a,profile[0]);const vpW=48,vpX=Pad.l+W-vpW;return profile.map((b,i)=>{const y1=sy(b.priceMax),y2=sy(b.priceMin),bh=Math.max(1,y2-y1),bw=(b.vol/maxV)*vpW,isPOC=b.vol===POC.vol;const color=isPOC?"#F59E0B":b.volUp>=b.volDn?T.up:T.down;return(<rect key={i} x={vpX+(vpW-bw)} y={y1} width={bw} height={bh} fill={color} opacity={isPOC?0.85:0.3}/>);}).concat(<line key="poc" x1={Pad.l} x2={Pad.l+W} y1={sy(POC.priceMid)} y2={sy(POC.priceMid)} stroke="#F59E0B" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.6}/>,<text key="poc-l" x={Pad.l+2} y={sy(POC.priceMid)-3} fill="#F59E0B" fontSize={F(7)}>POC</text>);})()}
+        {visData.map((d,i)=>i%step===0&&<text key={i} x={sx(i)} y={Pad.t+H+F(13)} textAnchor="middle" fill={T.textSub} fontSize={F(7)}>{d.date}</text>)}
 
 
         {/* ── Saved drawings ──────────────────────────────────────── */}
@@ -1350,7 +1476,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
               {/* Hit zone — wider invisible line for easier clicking */}
               <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke="transparent" strokeWidth={12}/>
               <line x1={Pad.l} x2={Pad.l+W} y1={y} y2={y} stroke={d.color} strokeWidth={isSel?2:1.2} strokeDasharray="6,3" opacity={isSel?1:0.85}/>
-              <text x={Pad.l+W+3} y={y+1} fontSize={7.5} fill={d.color} dominantBaseline="middle">{fY(d.price)}</text>
+              <text x={Pad.l+W+3} y={y+1} fontSize={F(7.5)} fill={d.color} dominantBaseline="middle">{fY(d.price)}</text>
               {isSel&&<circle cx={Pad.l} cy={y} r={4} fill={d.color} opacity={0.8}/>}
               {isSel&&<circle cx={Pad.l+W} cy={y} r={4} fill={d.color} opacity={0.8}/>}
             </g>);
@@ -1385,7 +1511,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
           const cx=sx(hoverI);
           const cy=sy(bar.close);
           const col=bar.isGreen?T.up:T.down;
-          const tipW=168,tipH=58;
+          const sc=1.15*fs,tipW=168*sc,tipH=58*sc;
           const tipX=cx+12+tipW>VW-Pad.r?cx-tipW-12:cx+12;
           const tipY=Math.max(Pad.t+2,Math.min(cy-tipH/2,Pad.t+H-tipH-2));
           return(<g style={{pointerEvents:"none"}}>
@@ -1400,23 +1526,101 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
             {/* Price label on left Y-axis */}
             <rect x={1} y={cy-9} width={Pad.l-3} height={18} rx={3} fill={col}/>
             <text x={(Pad.l-3)/2+1} y={cy+1} textAnchor="middle" fill="#fff"
-              fontSize={8} fontWeight={700} dominantBaseline="middle">{fY(bar.close)}</text>
+              fontSize={F(8)} fontWeight={700} dominantBaseline="middle">{fY(bar.close)}</text>
             {/* OHLCV tooltip */}
-            <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={6}
+            {!hideTip&&<g transform={`translate(${tipX},${tipY}) scale(${sc})`}>
+            <rect x={0} y={0} width={168} height={58} rx={6}
               fill={T.surface} stroke={T.border} strokeWidth={0.8} opacity={0.97}/>
-            <text x={tipX+10} y={tipY+13} fill={T.textSub} fontSize={8.5} fontFamily="monospace">{bar.date}</text>
+            <text x={10} y={13} fill={T.textSub} fontSize={8.5} fontFamily="monospace">{bar.date}</text>
             {[["O",bar.open,"#94A3B8"],["H",bar.high,T.up],["L",bar.low,T.down],["C",bar.close,col]].map(([l,v,c],i)=>(
               <g key={l}>
-                <text x={tipX+10+i*40} y={tipY+30} fill={T.textSub} fontSize={8} fontFamily="monospace">{l}</text>
-                <text x={tipX+18+i*40} y={tipY+30} fill={c} fontSize={8} fontWeight={700} fontFamily="monospace">{fY(v)}</text>
+                <text x={10+i*40} y={30} fill={T.textSub} fontSize={8} fontFamily="monospace">{l}</text>
+                <text x={18+i*40} y={30} fill={c} fontSize={8} fontWeight={700} fontFamily="monospace">{fY(v)}</text>
               </g>
             ))}
-            {bar.volume>0&&<text x={tipX+10} y={tipY+47} fill={T.textSub} fontSize={8} fontFamily="monospace">
+            {bar.volume>0&&<text x={10} y={47} fill={T.textSub} fontSize={8} fontFamily="monospace">
               Vol <tspan fill={T.text} fontWeight={700}>{bar.volume>1e9?(bar.volume/1e9).toFixed(1)+"B":bar.volume>1e6?(bar.volume/1e6).toFixed(1)+"M":bar.volume>1e3?(bar.volume/1e3).toFixed(0)+"K":bar.volume}</tspan>
             </text>}
+            </g>}
+          </g>);
+        })()}
+        {measure&&(()=>{
+          const x1=Pad.l+(measure.p1.barIdx-vStart+0.5)*(W/visData.length),y1=sy(measure.p1.price);
+          const x2=Pad.l+(measure.p2.barIdx-vStart+0.5)*(W/visData.length),y2=sy(measure.p2.price);
+          const dP=measure.p2.price-measure.p1.price,dPct=measure.p1.price?dP/measure.p1.price*100:0,bars=Math.abs(measure.p2.barIdx-measure.p1.barIdx);
+          const col=dP>=0?T.up:T.down;const txt=`${dP>=0?"+":""}${dP.toFixed(2)}  (${dP>=0?"+":""}${dPct.toFixed(2)}%)  ·  ${bars} bars`;
+          const tw=txt.length*F(6.2)+16,mx=Math.max(Pad.l+2,Math.min(VW-Pad.r-tw-2,(x1+x2)/2-tw/2)),my=Math.max(Pad.t+2,Math.min(y1,y2)-F(26));
+          return(<g style={{pointerEvents:"none"}}>
+            <rect x={Math.min(x1,x2)} y={Math.min(y1,y2)} width={Math.abs(x2-x1)} height={Math.abs(y2-y1)} fill={col} opacity={0.08}/>
+            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={col} strokeWidth={1.4} strokeDasharray="5,3"/>
+            <circle cx={x1} cy={y1} r={3.5} fill={col}/><circle cx={x2} cy={y2} r={3.5} fill={col}/>
+            <rect x={mx} y={my} width={tw} height={F(20)} rx={5} fill={T.surface} stroke={col} strokeWidth={1}/>
+            <text x={mx+8} y={my+F(14)} fill={col} fontSize={F(10)} fontWeight={700} fontFamily="monospace">{txt}</text>
           </g>);
         })()}
       </svg>
+    </div>
+  );
+}
+
+
+/* ════════════════════════════════════════════════════
+   FULL-SCREEN CHART SHELL — portal overlay, native fullscreen when the browser allows it
+════════════════════════════════════════════════════ */
+function useWinSize(){
+  const get=()=>({w:typeof window!=="undefined"?window.innerWidth:1024,h:typeof window!=="undefined"?(window.visualViewport?window.visualViewport.height:window.innerHeight):768});
+  const [sz,setSz]=useState(get);
+  useEffect(()=>{
+    const f=()=>setSz(get());
+    window.addEventListener("resize",f);window.addEventListener("orientationchange",f);
+    if(window.visualViewport)window.visualViewport.addEventListener("resize",f);
+    return()=>{window.removeEventListener("resize",f);window.removeEventListener("orientationchange",f);if(window.visualViewport)window.visualViewport.removeEventListener("resize",f);};
+  },[]);
+  return sz;
+}
+let UI_ZOOM=1; // set by StockScreener so overlays can cancel the text-size zoom
+function FullChartShell({T,onClose,children}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    const prev=document.body.style.overflow;document.body.style.overflow="hidden";
+    const key=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",key);
+    let native=false;
+    try{
+      const el=ref.current;
+      if(el&&el.requestFullscreen){
+        el.requestFullscreen().then(()=>{native=true;try{if(screen.orientation&&screen.orientation.lock&&window.innerWidth<900)screen.orientation.lock("landscape").catch(()=>{});}catch{}}).catch(()=>{});
+      }
+    }catch{}
+    const fsc=()=>{if(!document.fullscreenElement&&native){native=false;onClose();}};
+    document.addEventListener("fullscreenchange",fsc);
+    return()=>{
+      document.body.style.overflow=prev;window.removeEventListener("keydown",key);document.removeEventListener("fullscreenchange",fsc);
+      try{if(screen.orientation&&screen.orientation.unlock)screen.orientation.unlock();}catch{}
+      try{if(document.fullscreenElement)document.exitFullscreen();}catch{}
+    };
+  },[]);// eslint-disable-line
+  const node=(
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="Full screen chart" style={{position:"fixed",top:0,left:0,width:UI_ZOOM===1?"100vw":`${100/UI_ZOOM}vw`,height:UI_ZOOM===1?"100dvh":`${100/UI_ZOOM}dvh`,zIndex:1000,background:T.bg,color:T.text,fontFamily:T.sans,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top,0px)",paddingBottom:"env(safe-area-inset-bottom,0px)",paddingLeft:"env(safe-area-inset-left,0px)",paddingRight:"env(safe-area-inset-right,0px)",boxSizing:"border-box"}}>
+      {children}
+    </div>
+  );
+  return node;
+}
+const fmtVol=v=>v>1e9?(v/1e9).toFixed(2)+"B":v>1e6?(v/1e6).toFixed(2)+"M":v>1e3?(v/1e3).toFixed(1)+"K":String(v||0);
+function ReadoutBar({bar,last,T,compact}){
+  const b=bar||last;if(!b)return null;
+  const col=b.close>=b.open?T.up:T.down;
+  const chg=b.open?(b.close-b.open)/b.open*100:0;
+  const cell=(l,v,c)=>(<div style={{display:"flex",flexDirection:"column",gap:1,minWidth:compact?54:70}}><span style={{fontSize:10,color:T.textSub,letterSpacing:".06em",textTransform:"uppercase"}}>{l}</span><span style={{fontFamily:T.mono,fontSize:compact?14:18,fontWeight:700,color:c||T.text,fontVariantNumeric:"tabular-nums"}}>{v}</span></div>);
+  return(
+    <div aria-live="off" style={{display:"flex",gap:compact?12:22,flexWrap:"wrap",alignItems:"flex-end",padding:compact?"6px 12px":"8px 16px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
+      <div style={{display:"flex",flexDirection:"column",gap:1,minWidth:compact?80:110}}><span style={{fontSize:10,color:T.textSub,letterSpacing:".06em",textTransform:"uppercase"}}>{bar?"Bar":"Latest bar"}</span><span style={{fontFamily:T.mono,fontSize:compact?12:14,color:T.text}}>{b.date}</span></div>
+      {cell("Open",b.open.toFixed(2))}{cell("High",b.high.toFixed(2),T.up)}{cell("Low",b.low.toFixed(2),T.down)}{cell("Close",b.close.toFixed(2),col)}
+      {cell("Chg",(chg>=0?"+":"")+chg.toFixed(2)+"%",col)}
+      {b.volume>0&&cell("Vol",fmtVol(b.volume))}
+      {b.rsi!=null&&cell("RSI",b.rsi.toFixed(1),b.rsi>=70?T.down:b.rsi<=30?T.up:T.text)}
+      {b.vwap!=null&&cell("VWAP",b.vwap.toFixed(2),"#60A5FA")}
     </div>
   );
 }
@@ -1475,15 +1679,15 @@ function LineChartView({data,showEMA,showSupport,srLevels,showVWAP,showBB,signal
   );
 }
 
-function MACDPanel({data,T}){
+function MACDPanel({data,T,h=70,fs=0}){
   const d=data.filter(x=>x.macd!=null);
   const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,fontSize:10},itemStyle:{color:T.text}};
   return(
-    <ResponsiveContainer width="100%" height={70}>
+    <ResponsiveContainer width="100%" height={h}>
       <ComposedChart data={d} margin={{top:2,right:8,left:0,bottom:0}}>
         <CartesianGrid stroke={T.chartGrid} strokeDasharray="2 5" vertical={false}/>
         <XAxis dataKey="date" tick={false}/>
-        <YAxis tick={{fill:T.textSub,fontSize:7}} width={40} tickFormatter={v=>v.toFixed(2)}/>
+        <YAxis tick={{fill:T.textSub,fontSize:fs||7}} width={fs?52:40} tickFormatter={v=>v.toFixed(2)}/>
         <Tooltip {...tt}/>
         <Bar dataKey="histogram" isAnimationActive={false}>{d.map((e,i)=><Cell key={i} fill={e.histogram>=0?`${T.up}55`:`${T.down}55`}/>)}</Bar>
         <Line type="monotone" dataKey="macd"   stroke={T.accent} dot={false} strokeWidth={1} name="MACD"/>
@@ -1492,15 +1696,15 @@ function MACDPanel({data,T}){
     </ResponsiveContainer>
   );
 }
-function RSIPanel({data,T}){
+function RSIPanel({data,T,h=80,fs=0}){
   const d=data.filter(x=>x.rsi!=null);
   const last=d.length?d[d.length-1].rsi:null;
   const rc=last>=70?T.down:last<=30?T.up:T.ema9;
   const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,fontSize:10},itemStyle:{color:T.text}};
-  return(<ResponsiveContainer width="100%" height={80}><ComposedChart data={d} margin={{top:2,right:8,left:0,bottom:0}}>
+  return(<ResponsiveContainer width="100%" height={h}><ComposedChart data={d} margin={{top:2,right:8,left:0,bottom:0}}>
     <CartesianGrid stroke={T.chartGrid} strokeDasharray="3 4" vertical={false}/>
     <XAxis dataKey="date" tick={false}/>
-    <YAxis domain={[0,100]} tick={{fill:T.textSub,fontSize:7}} width={28} ticks={[30,50,70]}/>
+    <YAxis domain={[0,100]} tick={{fill:T.textSub,fontSize:fs||7}} width={fs?36:28} ticks={[30,50,70]}/>
     <Tooltip {...tt} formatter={v=>[v?.toFixed(1),"RSI(14)"]}/>
     <ReferenceLine y={70} stroke={T.down} strokeDasharray="3 3" strokeWidth={1} opacity={0.5}/>
     <ReferenceLine y={30} stroke={T.up}   strokeDasharray="3 3" strokeWidth={1} opacity={0.5}/>
@@ -1509,13 +1713,13 @@ function RSIPanel({data,T}){
   </ComposedChart></ResponsiveContainer>);
 }
 
-function VolumePanel({data,T}){
-  const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,fontSize:10},formatter:v=>`${(v/1e6).toFixed(1)}M`};
+function VolumePanel({data,T,h=50,fs=0}){
+  const tt={contentStyle:{background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,fontSize:10},formatter:v=>fmtVol(v)};
   return(
-    <ResponsiveContainer width="100%" height={50}>
+    <ResponsiveContainer width="100%" height={h}>
       <BarChart data={data} margin={{top:2,right:8,left:0,bottom:0}}>
         <XAxis dataKey="date" tick={false}/>
-        <YAxis tick={{fill:T.textSub,fontSize:7}} width={40} tickFormatter={v=>`${(v/1e6).toFixed(0)}M`}/>
+        <YAxis tick={{fill:T.textSub,fontSize:fs||7}} width={fs?52:40} tickFormatter={v=>v>=1e6?`${(v/1e6).toFixed(1)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:String(v)}/>
         <Tooltip {...tt}/>
         <Bar dataKey="volume" isAnimationActive={false}>{data.map((e,i)=><Cell key={i} fill={e.isGreen?`${T.up}40`:`${T.down}40`}/>)}</Bar>
       </BarChart>
@@ -2576,7 +2780,7 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick,onAdd,emb
 /* ════════════════════════════════════════════════════
    CHART CONTROLS
 ════════════════════════════════════════════════════ */
-function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
+function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T,onFull,compact}){
   const [activeHelp,setActiveHelp]=useState(null);
   const helpDefs={
     "EMA":    {color:T.ema9, title:"EMA — Exponential Moving Average",body:"Smoothed trend lines. When price crosses EMA9 above EMA20 = bullish momentum. When it drops below = bearish."},
@@ -2598,7 +2802,10 @@ function ChartControls({tf,setTf,chartMode,setChartMode,ind,toggleInd,T}){
   const history =Object.entries(TIMEFRAMES).filter(([,v])=>v.group==="History");
   return(
     <div>
-    <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+    <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:compact?"nowrap":"wrap",marginBottom:compact?6:10,width:compact?"max-content":undefined}}>
+      {onFull&&<button onClick={onFull} title="Full screen chart" aria-label="Full screen chart" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:6,border:`1px solid ${T.accent}`,background:`${T.accent}15`,color:T.accent,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.sans,whiteSpace:"nowrap"}}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>Full screen
+      </button>}
       {/* Intraday group */}
       <div style={{display:"flex",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:7,overflow:"hidden"}}>
         {intraday.map(([k])=>(
@@ -2678,17 +2885,24 @@ function IndexChart({index,T}){
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
 
+  const [chartTf,setChartTf]=useState("5m");
+  const shownIdx=useRef(null);
   useEffect(()=>{
-    let cancelled=false;
-    setChartLoading(true);setRawChart([]);
-    fetchYFChart(index.s,tf).then(data=>{
+    let cancelled=false;const sym=index.s;
+    if(shownIdx.current!==sym){shownIdx.current=sym;setRawChart([]);}
+    const hit=peekChart(sym,tf);
+    if(hit){setRawChart(prev=>sameBars(prev,hit.bars)?prev:hit.bars);setChartTf(tf);setChartLoading(false);}
+    else setChartLoading(true);
+    const load=(force)=>getChart(sym,tf,{force}).then(bars=>{
       if(cancelled)return;
-      if(data?.length>5){setRawChart(data);}
-      else{setRawChart(getChartData(index.p||100,pct(index.p||100,index.pc||100),tf));}
+      if(bars&&bars.length>5){setRawChart(prev=>sameBars(prev,bars)?prev:bars);setChartTf(tf);}
+      else if(!hit&&!force){setRawChart(getChartData(index.p||100,pct(index.p||100,index.pc||100),tf));setChartTf(tf);}
       setChartLoading(false);
     });
-    return()=>{cancelled=true;};
-  },[index.s,index.p,tf]);
+    if(!hit||!hit.fresh)load(false);
+    const iv=setInterval(()=>{if(typeof document==="undefined"||document.visibilityState==="visible")load(true);},(YF_TF[tf]?.barMin||5)<1440?20000:90000);
+    return()=>{cancelled=true;clearInterval(iv);};
+  },[index.s,tf]);// eslint-disable-line
 
   const data=useMemo(()=>enrich(rawChart),[rawChart]);
   const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
@@ -2718,10 +2932,10 @@ function IndexChart({index,T}){
         </div>
       </div>
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
-      {chartLoading&&<div style={{padding:"4px 0 10px"}}><LoadTimer T={T} compact label={"Loading "+index.name+" chart"} expected={4}/></div>}
-      <div style={{opacity:chartLoading?0.35:1,transition:"opacity .2s"}}>
+      {chartLoading&&rawChart.length===0&&<div style={{padding:"4px 0 10px"}}><LoadTimer T={T} compact label={"Loading "+index.name+" chart"} expected={4}/></div>}
+      <div style={{opacity:chartLoading&&rawChart.length===0?0.35:1,transition:"opacity .2s"}}>
         {chartMode==="candle"
-          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={index.s} tf={tf} chartH={window.innerWidth<640?460:210}/>
+          ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={index.s} tf={chartTf} chartH={window.innerWidth<640?300:260}/>
           :<LineChartView data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={185} accent={col}/>
         }
       </div>
@@ -3320,27 +3534,95 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
   const [ind,setInd]=useState({ema:false,macd:false,volume:false,support:false,vwap:false,bb:false,rsi:false,signals:false,volProfile:false});
   const [rawChart,setRawChart]=useState([]);
   const [chartLoading,setChartLoading]=useState(false);
+  const [chartTf,setChartTf]=useState("5m");   // timeframe of the bars actually on screen
+  const [initWin,setInitWin]=useState(null);   // time window to keep when zoom switches resolution
+  const [resNote,setResNote]=useState("");
+  const [blocked,setBlocked]=useState({});
+  const resBusy=useRef(false);
+  const shownSym=useRef(null);
+  const pickTf=t=>{setInitWin(null);setResNote("");setTf(t);};
   const toggleInd=k=>setInd(p=>({...p,[k]:!p[k]}));
+  const [full,setFull]=useState(false);
+  const [hoverBar,setHoverBar]=useState(null);
+  const win=useWinSize();
+  useEffect(()=>{setFull(false);},[selected.s]);
 
   // Reset to first chart timeframe when ticker changes
   useEffect(()=>{ setTf("5m"); },[selected.s]);
 
   useEffect(()=>{
-    let cancelled=false;
-    setChartLoading(true);setRawChart([]);
-    fetchYFChart(selected.s,tf).then(data=>{
+    let cancelled=false;const sym=selected.s;
+    if(shownSym.current!==sym){shownSym.current=sym;setRawChart([]);}
+    const hit=peekChart(sym,tf);
+    if(hit){setRawChart(prev=>sameBars(prev,hit.bars)?prev:hit.bars);setChartTf(tf);setChartLoading(false);}
+    else setChartLoading(true);   // previous chart stays visible underneath
+    const load=(force)=>getChart(sym,tf,{force}).then(bars=>{
       if(cancelled)return;
-      if(data?.length>5){setRawChart(data);}
-      else{setRawChart(getChartData(selected.p||100,pct(selected.p||100,selected.pc||100),tf));}
+      if(bars&&bars.length>5){setRawChart(prev=>sameBars(prev,bars)?prev:bars);setChartTf(tf);}
+      else if(!hit&&!force){setRawChart(getChartData(selected.p||100,pct(selected.p||100,selected.pc||100),tf));setChartTf(tf);setTimeout(()=>{if(!cancelled)load(true);},5000);}
       setChartLoading(false);
     });
-    return()=>{cancelled=true;};
-  },[selected.s,tf]);
+    if(!hit||!hit.fresh)load(false);
+    const iv=setInterval(()=>{if(typeof document==="undefined"||document.visibilityState==="visible")load(true);},(YF_TF[tf]?.barMin||5)<1440?20000:90000);
+    return()=>{cancelled=true;clearInterval(iv);};
+  },[selected.s,tf]);// eslint-disable-line
+  useEffect(()=>{const id=setTimeout(()=>prefetchCharts(selected.s),900);return()=>clearTimeout(id);},[selected.s]);
+  useEffect(()=>{if(!resNote||/^Loading/.test(resNote))return undefined;const id=setTimeout(()=>setResNote(""),3200);return()=>clearTimeout(id);},[resNote]);
+  const onRes=useCallback(async(dir,win)=>{
+    if(resBusy.current)return;
+    const target=nextRes(chartTf,dir);if(!target)return;
+    resBusy.current=true;
+    setResNote(dir==="in"?"Loading finer candles…":"Loading wider view…");
+    try{
+      const bars=await getChart(selected.s,target);
+      if(!bars||bars.length<6){setBlocked(b=>({...b,[selected.s+"|"+chartTf+"|"+dir]:1}));setResNote("");return;}
+      if(dir==="in"&&win&&(!bars[0].ts||bars[0].ts>win.t0+8*3600)){
+        setBlocked(b=>({...b,[selected.s+"|"+chartTf+"|in"]:1}));
+        setResNote("Max zoom for the data available");return;
+      }
+      setInitWin(dir==="in"?win:null);
+      setTf(target);
+      setResNote("Now showing "+tfName(target)+" candles");
+    }finally{resBusy.current=false;}
+  },[chartTf,selected.s]);
+  const canFiner=!!nextRes(chartTf,"in")&&!blocked[selected.s+"|"+chartTf+"|in"];
+  const canCoarser=!!nextRes(chartTf,"out")&&!blocked[selected.s+"|"+chartTf+"|out"];
 
   const chartData=useMemo(()=>enrich(rawChart),[rawChart]);
-  const sr=useMemo(()=>TIMEFRAMES[tf]?.barMin>=1440?findSR(rawChart):[],[rawChart,tf]);
+  const sr=useMemo(()=>TIMEFRAMES[chartTf]?.barMin>=1440?findSR(rawChart):[],[rawChart,chartTf]);
   const signals=useMemo(()=>ind.signals?detectSignals(chartData):[],[chartData,ind.signals]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
+  const mobW=win.w<640;
+  const shortH=win.h<560;
+  const pH=(h)=>h+38;
+  const panelTotal=(ind.volume?pH(mobW?70:96):0)+(ind.macd?pH(mobW?90:120):0)+(ind.rsi?pH(mobW?90:120):0);
+  const topUsed=(shortH?44:56)+(shortH?40:mobW?100:56)+(mobW||shortH?(shortH?44:86):64)+16;
+  const fullH=shortH?Math.max(200,win.h-topUsed):Math.max(240,Math.round((win.h-topUsed)*0.55),win.h-topUsed-panelTotal);
+  const chartBox=(big)=>(
+    <div style={{background:T.surface,borderRadius:12,padding:big?"6px 6px":"10px 8px",marginBottom:big?0:8,border:`1px solid ${T.border}`,boxShadow:big?"none":T.shadow,minHeight:big?0:220,position:"relative",overflow:"hidden"}}>
+      {chartLoading&&chartData.length>0&&<div style={{position:"absolute",left:0,right:0,top:0,height:2,background:T.border,zIndex:5}}><div style={{height:"100%",width:"35%",background:T.accent||T.up,animation:"tfbar 1s ease-in-out infinite"}}/></div>}
+      {chartData.length>0&&<div style={{position:"absolute",left:big?10:12,top:big?8:6,zIndex:4,display:"flex",gap:6,alignItems:"center",pointerEvents:"none"}}>
+        <span style={{fontSize:big?11:9,fontWeight:700,padding:"2px 7px",borderRadius:99,background:T.surfaceB,border:`1px solid ${T.border}`,color:T.textSub,fontFamily:T.sans}}>{tfName(chartTf)} candles</span>
+        {resNote&&<span style={{fontSize:big?11:9,fontWeight:600,padding:"2px 8px",borderRadius:99,background:T.accentBg||T.surfaceB,border:`1px solid ${T.accent||T.border}`,color:T.accent||T.text,fontFamily:T.sans}}>{resNote}</span>}
+      </div>}
+      {chartLoading&&chartData.length===0
+        ?<div style={{height:big?fullH:210,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}}>
+          <LoadTimer T={T} label="Loading chart" expected={4}/>
+         </div>
+        :chartData.length>0&&(chartMode==="candle"
+          ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={chartTf} onRes={onRes} initWin={initWin} canFiner={canFiner} canCoarser={canCoarser} chartH={big?fullH:(mobW?300:260)} big={big} fs={big?(mobW?1.1:1.3):1} hideTip={big} onHover={big?setHoverBar:undefined}/>
+          :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={big?fullH:195} accent={isUp?T.up:T.down}/>
+        )
+      }
+    </div>
+  );
+  const pnlStyle={background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`};
+  const pnlLbl={fontSize:big=>big?11:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans};
+  const panels=(big)=>(<>
+    {ind.volume&&<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>Volume</div><VolumePanel data={chartData} T={T} h={big?(mobW?70:96):50} fs={big?10:0}/></div>}
+    {ind.macd&&<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T} h={big?(mobW?90:120):70} fs={big?10:0}/></div>}
+    {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T} h={big?(mobW?90:120):80} fs={big?10:0}/></div>);})()}
+  </>);
   return(
     <div style={{animation:"fadeUp 0.18s ease"}}>
       <div style={{background:T.surface,borderRadius:14,padding:"16px",marginBottom:10,border:`1px solid ${T.border}`,boxShadow:T.shadow}}>
@@ -3358,21 +3640,37 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
           </div>
         </div>
       </div>
-      <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
-      <div style={{background:T.surface,borderRadius:12,padding:"10px 8px",marginBottom:8,border:`1px solid ${T.border}`,boxShadow:T.shadow,minHeight:220}}>
-        {chartLoading
-          ?<div style={{height:210,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}}>
-            <LoadTimer T={T} label="Loading chart" expected={4}/>
-           </div>
-          :chartData.length>0&&(chartMode==="candle"
-            ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={tf} chartH={window.innerWidth<640?520:210}/>
-            :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={195} accent={isUp?T.up:T.down}/>
-          )
-        }
-      </div>
-      {ind.volume&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>Volume</div><VolumePanel data={chartData} T={T}/></div>}
-      {ind.macd&&<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T}/></div>}
-      {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={{background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`}}><div style={{fontSize:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T}/></div>);})()}
+      {full?(
+        <div style={{background:T.surface,border:`1px dashed ${T.border}`,borderRadius:12,padding:"26px 16px",marginBottom:8,textAlign:"center",color:T.textSub,fontSize:12}}>
+          Chart is open in full screen. <button onClick={()=>setFull(false)} style={{marginLeft:6,padding:"4px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,cursor:"pointer",fontSize:12}}>Bring it back</button>
+        </div>
+      ):(<>
+        <ChartControls tf={tf} setTf={pickTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T} onFull={()=>setFull(true)}/>
+        {chartBox(false)}
+        {panels(false)}
+      </>)}
+      {full&&(
+        <FullChartShell T={T} onClose={()=>setFull(false)}>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:shortH?"4px 12px":win.w<640?"8px 12px":"10px 16px",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",minWidth:0,flex:1}}>
+              <span style={{fontSize:win.w<640?16:20,fontWeight:800}}>{selected.s}</span>
+              <span style={{fontSize:win.w<640?16:20,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{selected.p<1?`$${selected.p.toFixed(4)}`:`$${f2(selected.p)}`}</span>
+              <DailyChange p={selected.p} pc={selected.pc} T={T}/>
+              {win.w>=720&&<span style={{fontSize:12,color:T.textSub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{names[selected.s]||""}</span>}
+            </div>
+            {win.h>win.w&&win.w<640&&<span style={{fontSize:10,color:T.textSub}}>Rotate for a wider view</span>}
+            <button onClick={()=>setFull(false)} aria-label="Exit full screen" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",minHeight:40,borderRadius:10,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.sans}}><I.X s={12}/> Close</button>
+          </div>
+          <div style={{flex:1,minHeight:0,overflowY:"auto",overscrollBehavior:"contain",WebkitOverflowScrolling:"touch"}}>
+            <div style={{padding:"8px 10px 0",overflowX:"auto"}}>
+              <ChartControls tf={tf} setTf={pickTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T} compact={shortH}/>
+            </div>
+            <div style={{position:"sticky",top:0,zIndex:15}}><ReadoutBar bar={hoverBar} last={chartData.at(-1)} T={T} compact={win.w<640||shortH}/></div>
+            <div style={{padding:"6px 8px 0"}}>{chartBox(true)}</div>
+            <div style={{padding:"8px 8px 12px"}}>{panels(true)}</div>
+          </div>
+        </FullChartShell>
+      )}
       {/* ── AI Analysis ──────────────────────────────── */}
       {/* ── Stock Insights ────────────────────────────── */}
       <HealthPanel h={health} loading={healthLoading} T={T}/>
@@ -4146,11 +4444,448 @@ function SettingsPanel({T,prefs,setPref,resetPrefs,autoRefresh,setAutoRefresh,mo
   );
 }
 
+/* ════════════════════════════════════════════════════
+   PAPER TRADING — virtual $100,000 account for stocks and options.
+   Saved on the device; synced to the person's access code when they have one.
+════════════════════════════════════════════════════ */
+const PAPER_START=100000;
+const PAPER_KEY="screener_paper_v1";
+const paperNew=()=>({v:1,cash:PAPER_START,start:PAPER_START,pos:{},trades:[],eq:[],t:Date.now()});
+const paperLoadLocal=()=>{try{const j=JSON.parse(localStorage.getItem(PAPER_KEY)||"null");if(j&&typeof j.cash==="number"&&j.pos)return j;}catch{}return paperNew();};
+const usd=(n,d=2)=>{const v=Number(n)||0;return (v<0?"-":"")+"$"+Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});};
+const signedUsd=(n)=>(n>=0?"+":"")+usd(n);
+const todayET=()=>{try{return new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"});}catch{return new Date().toISOString().slice(0,10);}};
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtExp=(d)=>{const [y,m,dd]=String(d).split("-");return `${MON[(+m||1)-1]} ${+dd}, '${String(y).slice(2)}`;};
+const occKey=(sym,exp,right,strike)=>{const [y,m,d]=exp.split("-");return sym+y.slice(2)+m+d+(right==="p"?"P":"C")+String(Math.round(strike*1000)).padStart(8,"0");};
+const daysTo=(exp)=>Math.round((new Date(exp+"T00:00:00Z")-new Date(todayET()+"T00:00:00Z"))/864e5);
+const posLabel=(p)=>p.type==="opt"?`${p.sym} ${fmtExp(p.meta.exp)} ${p.meta.k} ${p.meta.r==="p"?"Put":"Call"}`:p.sym;
+
+/* Fills at the price you pass in. Long only: buy to open, sell to close. Returns {acc,pl} or {error}. */
+function paperTrade(acc,o){
+  const qty=Math.floor(Number(o.qty)),price=Number(o.price),mult=o.mult||1;
+  if(!(qty>=1))return{error:"Enter a quantity of at least 1."};
+  if(!(price>0))return{error:"No price available yet. Try again in a moment."};
+  const val=price*qty*mult;
+  const next=JSON.parse(JSON.stringify(acc));
+  let pl=null;
+  if(o.side==="buy"){
+    if(val>next.cash+1e-9)return{error:`Not enough cash: this costs ${usd(val)} and you have ${usd(next.cash)}.`};
+    next.cash-=val;
+    const p=next.pos[o.key];
+    if(p){p.avg=(p.avg*p.qty+price*qty)/(p.qty+qty);p.qty+=qty;}
+    else next.pos[o.key]={k:o.key,type:o.type,sym:o.sym,qty,avg:price,mult,meta:o.meta||null};
+  }else{
+    const p=next.pos[o.key];
+    if(!p||p.qty<qty)return{error:`You only hold ${p?p.qty:0}.`};
+    pl=(price-p.avg)*qty*mult;
+    next.cash+=val;p.qty-=qty;
+    if(p.qty===0)delete next.pos[o.key];
+  }
+  next.trades.unshift({t:Date.now(),k:o.key,type:o.type,sym:o.sym,side:o.side,qty,price,mult,pl,meta:o.meta||null,note:o.note||null});
+  next.trades=next.trades.slice(0,300);next.t=Date.now();
+  return{acc:next,pl};
+}
+const paperEquity=(acc,marks)=>Object.values(acc.pos).reduce((v,p)=>v+p.qty*p.mult*(marks[p.k]!=null?marks[p.k]:p.avg),acc.cash);
+/* Options past their expiry date settle at intrinsic value using the stock's latest price. */
+function paperSettle(acc,under){
+  const today=todayET();let next=acc,changed=false;
+  Object.values(acc.pos).forEach(p=>{
+    if(p.type!=="opt"||!p.meta||p.meta.exp>=today)return;
+    const s=under[p.sym];if(!(s>0))return;
+    const iv=Math.max(0,p.meta.r==="p"?p.meta.k-s:s-p.meta.k);
+    const r=paperTrade(next,{key:p.k,type:"opt",sym:p.sym,side:"sell",qty:p.qty,price:iv>0?iv:0.0001,mult:100,meta:p.meta,note:iv>0?"Expired in the money":"Expired worthless"});
+    if(r.acc){next=r.acc;changed=true;}
+  });
+  return changed?next:acc;
+}
+function paperSnap(acc,equity){
+  const d=todayET();const eq=acc.eq.slice();
+  if(eq.length&&eq[eq.length-1].d===d)eq[eq.length-1]={d,v:Math.round(equity*100)/100};else eq.push({d,v:Math.round(equity*100)/100});
+  return Object.assign({},acc,{eq:eq.slice(-400)});
+}
+function paperInsights(acc,marks,health,earn){
+  const out=[];const eq=paperEquity(acc,marks);if(eq<=0)return out;
+  const bySym={};
+  Object.values(acc.pos).forEach(p=>{const v=p.qty*p.mult*(marks[p.k]!=null?marks[p.k]:p.avg);bySym[p.sym]=(bySym[p.sym]||0)+v;});
+  Object.entries(bySym).forEach(([s,v])=>{if(v/eq>0.35)out.push({sev:"watch",t:`${s} is ${Math.round(v/eq*100)}% of your account. Spreading across several companies lowers the damage if one falls.`});});
+  Object.values(acc.pos).forEach(p=>{
+    if(p.type==="opt"&&p.meta){const d=daysTo(p.meta.exp);if(d<=7&&d>=0)out.push({sev:"watch",t:`${posLabel(p)} expires in ${d} day${d===1?"":"s"}. Options lose value fastest near expiry.`});}
+  });
+  Object.keys(bySym).forEach(s=>{
+    const h=health&&health[s];
+    if(h&&h.level&&h.level!=="ok"&&h.level!=="nodata")out.push({sev:"watch",t:`${s} has health-check flags (${h.label}). Open it in the Watchlist to see what to research.`});
+    if(earn&&earn[s])out.push({sev:"info",t:`${s} reports earnings this week, so a bigger-than-usual move is possible.`});
+  });
+  const cashPct=acc.cash/eq*100;
+  if(cashPct<5&&Object.keys(acc.pos).length)out.push({sev:"info",t:`Only ${cashPct.toFixed(0)}% of your account is cash, so you have little room for new ideas.`});
+  return out.slice(0,6);
+}
+const PAPER_NOTE_OPT="Paper options fill at the ask when you buy and the bid when you sell. Quotes can be about 15 minutes delayed and the market must be open for them to move.";
+
+function PayoffChart({type,strike,premium,qty,under,T}){
+  const W=320,H=120,pad=10;
+  const lo=Math.min(under,strike)*0.82,hi=Math.max(under,strike)*1.18;
+  const f=(S)=>(Math.max(0,type==="p"?strike-S:S-strike)-premium)*100*qty;
+  const pts=Array.from({length:41},(_,i)=>{const S=lo+(hi-lo)*i/40;return{S,v:f(S)};});
+  const vmin=Math.min(...pts.map(p=>p.v)),vmax=Math.max(...pts.map(p=>p.v),1);
+  const X=S=>pad+(S-lo)/(hi-lo)*(W-2*pad),Y=v=>pad+(1-(v-vmin)/((vmax-vmin)||1))*(H-2*pad);
+  const be=type==="p"?strike-premium:strike+premium;
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Profit or loss at expiry" style={{display:"block"}}>
+      <line x1={pad} x2={W-pad} y1={Y(0)} y2={Y(0)} stroke={T.border} strokeWidth="1"/>
+      <polyline fill="none" stroke={T.accent} strokeWidth="2" points={pts.map(p=>`${X(p.S).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ")}/>
+      <line x1={X(under)} x2={X(under)} y1={pad} y2={H-pad} stroke={T.textSub} strokeDasharray="3,3" strokeWidth="1"/>
+      <text x={X(under)+4} y={pad+8} fill={T.textSub} fontSize="9">now {usd(under)}</text>
+      {be>lo&&be<hi&&<g><circle cx={X(be)} cy={Y(0)} r="3.5" fill={T.accent}/><text x={Math.min(X(be)+5,W-70)} y={Y(0)-6} fill={T.text} fontSize="9" fontWeight="700">breakeven {usd(be)}</text></g>}
+      <text x={pad} y={H-1} fill={T.down} fontSize="9">max loss {usd(-premium*100*qty,0)}</text>
+    </svg>
+  );
+}
+
+function PaperPanel({T,active,names,healthMap,earnMap,onOpen,mobile}){
+  const [acc,setAcc]=useState(paperLoadLocal);
+  const [marks,setMarks]=useState({});
+  const [under,setUnder]=useState({});
+  const [sync,setSync]=useState({s:"local"});
+  const [kind,setKind]=useState("stock"); // stock | opt
+  const [sym,setSym]=useState("");
+  const [symIn,setSymIn]=useState("");
+  const [px,setPx]=useState(null);
+  const [qty,setQty]=useState("10");
+  const [msg,setMsg]=useState(null);
+  const [exps,setExps]=useState([]);
+  const [exp,setExp]=useState("");
+  const [chain,setChain]=useState(null);
+  const [optErr,setOptErr]=useState(null);
+  const [optLoad,setOptLoad]=useState(false);
+  const [right,setRight]=useState("c");
+  const [sel,setSel]=useState(null);
+  const [allK,setAllK]=useState(false);
+  const [confirmReset,setConfirmReset]=useState(false);
+  const accRef=useRef(acc);accRef.current=acc;
+  const loadedSync=useRef(false);
+
+  // save on the device every time the account changes
+  useEffect(()=>{try{localStorage.setItem(PAPER_KEY,JSON.stringify(acc));}catch{}},[acc]);
+
+  // sync with the access code (if any): newest copy wins
+  const code=(()=>{try{return localStorage.getItem("screener_code")||"";}catch{return"";}})();
+  useEffect(()=>{
+    if(!code||loadedSync.current)return;
+    loadedSync.current=true;setSync({s:"syncing"});
+    fetch("/api/subscribe?kind=paper",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"load"})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j})))
+      .then(({ok,j})=>{
+        if(!ok){setSync({s:j.error==="code_required"?"local":"error",m:j.error});return;}
+        const remote=j.data;
+        if(remote&&remote.t>accRef.current.t){setAcc(remote);}
+        setSync({s:"synced"});
+      }).catch(()=>setSync({s:"error"}));
+  },[code]);
+  useEffect(()=>{
+    if(!code||!loadedSync.current||sync.s==="syncing")return;
+    const id=setTimeout(()=>{
+      fetch("/api/subscribe?kind=paper",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save",data:acc})})
+        .then(r=>setSync(s=>({s:r.ok?"synced":"error",m:r.ok?undefined:String(r.status)}))).catch(()=>setSync({s:"error"}));
+    },1500);
+    return()=>clearTimeout(id);
+  },[acc]);// eslint-disable-line
+
+  // live marks for what you hold (stocks via quotes, options via the options feed)
+  const held=Object.values(acc.pos);
+  const heldKey=held.map(p=>p.k).sort().join(",");
+  const refreshMarks=useCallback(async()=>{
+    const a=accRef.current;const ps=Object.values(a.pos);
+    const stockSyms=[...new Set(ps.map(p=>p.sym))];
+    if(!stockSyms.length)return;
+    const q=await fetchYFQuotes(stockSyms);
+    const nm={},nu={};
+    stockSyms.forEach(s=>{if(q[s]&&q[s].p>0)nu[s]=q[s].p;});
+    ps.filter(p=>p.type==="stock").forEach(p=>{if(nu[p.sym])nm[p.k]=nu[p.sym];});
+    const occ=ps.filter(p=>p.type==="opt").map(p=>p.k);
+    if(occ.length){
+      try{
+        const r=await fetch("/api/events?kind=optq&symbols="+occ.join(","));
+        const j=await r.json();
+        occ.forEach(k=>{const o=j&&j.quotes&&j.quotes[k];if(o){const mid=o.b>0&&o.a>0?(o.b+o.a)/2:(o.l>0?o.l:null);if(mid)nm[k]=mid;}});
+      }catch{}
+    }
+    setUnder(u=>Object.assign({},u,nu));setMarks(m=>Object.assign({},m,nm));
+    // settle expired options, then record today's equity
+    let cur=accRef.current;
+    const settled=paperSettle(cur,Object.assign({},nu));
+    const eqNow=paperEquity(settled,Object.assign({},nm));
+    const snapped=nu&&Object.keys(nu).length?paperSnap(settled,eqNow):settled;
+    if(snapped!==cur)setAcc(snapped);
+  },[]);
+  useEffect(()=>{
+    if(!active)return undefined;
+    refreshMarks();
+    const id=setInterval(()=>{if(!document.hidden)refreshMarks();},30000);
+    return()=>clearInterval(id);
+  },[active,heldKey,refreshMarks]);
+
+  // price of the symbol you are about to trade
+  const pickSym=async(s)=>{
+    s=String(s||"").toUpperCase().trim();if(!s)return;
+    setSym(s);setSymIn("");setSel(null);setChain(null);setExps([]);setExp("");setOptErr(null);setMsg(null);setPx(null);
+    const q=await fetchYFQuotes([s]);
+    if(q[s]&&q[s].p>0){setPx(q[s].p);setUnder(u=>Object.assign({},u,{[s]:q[s].p}));}
+    else setMsg({bad:true,t:`No price found for ${s}. Check the ticker.`});
+  };
+  useEffect(()=>{
+    if(kind!=="opt"||!sym)return;
+    let off=false;setOptLoad(true);setOptErr(null);
+    fetch("/api/events?kind=optexp&symbol="+encodeURIComponent(sym)).then(r=>r.json()).then(j=>{
+      if(off)return;
+      if(j.error){setOptErr(j.error);setExps([]);setOptLoad(false);return;}
+      const list=(j.expirations||[]).filter(d=>d>=todayET());
+      setExps(list);
+      const pref=list.find(d=>daysTo(d)>=14)||list[0]||"";
+      setExp(pref);if(!pref)setOptLoad(false);
+    }).catch(()=>{if(!off){setOptErr("provider_error");setOptLoad(false);}});
+    return()=>{off=true;};
+  },[kind,sym]);
+  useEffect(()=>{
+    if(kind!=="opt"||!sym||!exp)return;
+    let off=false;setOptLoad(true);setSel(null);
+    fetch(`/api/events?kind=optchain&symbol=${encodeURIComponent(sym)}&exp=${exp}`).then(r=>r.json()).then(j=>{
+      if(off)return;setOptLoad(false);
+      if(j.error){setOptErr(j.error);return;}
+      setChain(j);if(j.under>0)setUnder(u=>Object.assign({},u,{[sym]:j.under}));
+    }).catch(()=>{if(!off){setOptLoad(false);setOptErr("provider_error");}});
+    return()=>{off=true;};
+  },[kind,sym,exp]);
+
+  const doTrade=(o)=>{
+    const r=paperTrade(acc,o);
+    if(r.error){setMsg({bad:true,t:r.error});return;}
+    setAcc(r.acc);
+    setMsg({t:`${o.side==="buy"?"Bought":"Sold"} ${o.qty} ${o.type==="opt"?"contract"+(o.qty>1?"s":""):"share"+(o.qty>1?"s":"")} of ${o.label} at ${usd(o.price)}${r.pl!=null?` · ${signedUsd(r.pl)} realized`:""}.`});
+    setTimeout(refreshMarks,300);
+  };
+  const q=Math.max(0,Math.floor(Number(qty)||0));
+  const eqNow=paperEquity(acc,marks);
+  const openPL=held.reduce((v,p)=>v+(((marks[p.k]!=null?marks[p.k]:p.avg)-p.avg)*p.qty*p.mult),0);
+  const realized=acc.trades.reduce((v,t)=>v+(t.pl||0),0);
+  const totalRet=eqNow-acc.start;
+  const insights=paperInsights(acc,marks,healthMap,earnMap);
+  const sellers=acc.trades.filter(t=>t.pl!=null);
+  const wins=sellers.filter(t=>t.pl>0).length;
+
+  const card={background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:T.shadow};
+  const lbl={fontSize:10,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub};
+  const inp={padding:"9px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:14,fontFamily:T.mono,minWidth:0,width:"100%",boxSizing:"border-box"};
+  const btn=(c,dis)=>({padding:"10px 14px",borderRadius:8,border:`1px solid ${c}`,background:dis?"transparent":`${c}22`,color:dis?T.textSub:c,fontWeight:700,fontSize:13,cursor:dis?"not-allowed":"pointer",fontFamily:T.sans,flex:1,minHeight:42,opacity:dis?0.5:1});
+  const stat=(l,v,c)=>(<div style={{minWidth:0}}><div style={lbl}>{l}</div><div style={{fontFamily:T.mono,fontSize:mobile?15:17,fontWeight:700,color:c||T.text,fontVariantNumeric:"tabular-nums",overflowWrap:"anywhere"}}>{v}</div></div>);
+
+  // option chain rows
+  const rows=chain&&chain.rows?chain.rows.filter(r=>r.r===right).sort((a,b)=>a.k-b.k):[];
+  const u0=chain&&chain.under>0?chain.under:px;
+  let shown=rows;
+  if(!allK&&rows.length>14&&u0>0){
+    let ai=0,best=1e9;rows.forEach((r,i)=>{const d=Math.abs(r.k-u0);if(d<best){best=d;ai=i;}});
+    shown=rows.slice(Math.max(0,ai-6),Math.max(0,ai-6)+14);
+  }
+  const selRow=sel&&rows.find(r=>r.o===sel);
+  const fillBuy=selRow?(selRow.a>0?selRow.a:selRow.l>0?selRow.l:null):null;
+  const fillSell=selRow?(selRow.b>0?selRow.b:selRow.l>0?selRow.l:null):null;
+  const heldSel=selRow?acc.pos[selRow.o]:null;
+  const optLabel=selRow?`${sym} ${fmtExp(exp)} ${selRow.k} ${right==="p"?"Put":"Call"}`:"";
+  const optMeta=selRow?{exp,k:selRow.k,r:right}:null;
+  const stockHeld=sym?acc.pos[sym]:null;
+
+  return(
+    <div style={{maxWidth:980,margin:"0 auto"}}>
+      <div style={{...card,paddingBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+          <div>
+            <div style={lbl}>Paper trading · virtual money</div>
+            <div style={{fontFamily:T.mono,fontSize:mobile?26:32,fontWeight:800,color:T.text,fontVariantNumeric:"tabular-nums",marginTop:2}}>{usd(eqNow)}</div>
+            <div style={{fontSize:12,color:totalRet>=0?T.up:T.down,fontFamily:T.mono,fontWeight:700}}>{signedUsd(totalRet)} ({(totalRet/acc.start*100>=0?"+":"")+(totalRet/acc.start*100).toFixed(2)}%) since you started</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+            <span title={sync.s==="synced"?"Your account is saved to your access code":"Saved in this browser only"} style={{fontSize:10,padding:"3px 9px",borderRadius:10,border:`1px solid ${sync.s==="synced"?T.up:sync.s==="error"?T.down:T.border}`,color:sync.s==="synced"?T.up:sync.s==="error"?T.down:T.textSub}}>
+              {sync.s==="synced"?"Synced to your access code":sync.s==="syncing"?"Syncing…":sync.s==="error"?"Sync problem, saved on this device":code?"Saved on this device":"Saved on this device · add an access code in Settings to sync"}
+            </span>
+            {!confirmReset
+              ?<button onClick={()=>setConfirmReset(true)} style={{fontSize:11,padding:"4px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,cursor:"pointer"}}>Reset account</button>
+              :<span style={{display:"flex",gap:6,alignItems:"center",fontSize:11,color:T.textSub}}>Start over with $100,000?
+                <button onClick={()=>{setAcc(paperNew());setMarks({});setConfirmReset(false);setMsg(null);}} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${T.down}`,background:`${T.down}18`,color:T.down,cursor:"pointer",fontWeight:700}}>Yes, reset</button>
+                <button onClick={()=>setConfirmReset(false)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,cursor:"pointer"}}>Cancel</button></span>}
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+          {stat("Cash",usd(acc.cash))}
+          {stat("Open P&L",signedUsd(openPL),openPL>=0?T.up:T.down)}
+          {stat("Realized",signedUsd(realized),realized>=0?T.up:T.down)}
+          {stat("Win rate",sellers.length?Math.round(wins/sellers.length*100)+"% of "+sellers.length:"n/a")}
+        </div>
+        {acc.eq.length>=2&&(()=>{
+          const v=acc.eq.map(e=>e.v),mn=Math.min(...v),mx=Math.max(...v),W=300,H=44;
+          const pts=v.map((y,i)=>`${(i/(v.length-1)*W).toFixed(1)},${(H-2-(y-mn)/((mx-mn)||1)*(H-4)).toFixed(1)}`).join(" ");
+          return(<div style={{marginTop:10}}><div style={lbl}>Account value by day</div><svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" aria-hidden="true"><polyline points={pts} fill="none" stroke={totalRet>=0?T.up:T.down} strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg></div>);
+        })()}
+      </div>
+
+      {insights.length>0&&(
+        <div style={card}>
+          <div style={{...lbl,marginBottom:6}}>Portfolio checks</div>
+          {insights.map((x,i)=>(<div key={i} style={{display:"flex",gap:8,fontSize:12,color:T.text,lineHeight:1.5,padding:"4px 0"}}><span style={{color:x.sev==="watch"?"#F59E0B":T.textSub}}>{x.sev==="watch"?"▲":"●"}</span><span>{x.t}</span></div>))}
+        </div>
+      )}
+
+      <div style={card}>
+        <div style={{...lbl,marginBottom:8}}>Open positions ({held.length})</div>
+        {!held.length&&<div style={{fontSize:12,color:T.textSub,lineHeight:1.6}}>Nothing yet. Use the trade ticket below to buy a stock or an option. Your positions, profit and loss, and checks show up here.</div>}
+        {held.map(p=>{
+          const mk=marks[p.k]!=null?marks[p.k]:p.avg;const pl=(mk-p.avg)*p.qty*p.mult;const plp=p.avg?(mk/p.avg-1)*100:0;
+          return(
+            <div key={p.k} style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",alignItems:"center",padding:"10px 0",borderTop:`1px solid ${T.border}`}}>
+              <div style={{flex:"1 1 170px",minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.text,overflowWrap:"anywhere"}}>{posLabel(p)}</div>
+                <div style={{fontSize:10,color:T.textSub}}>{p.qty} {p.type==="opt"?"contract"+(p.qty>1?"s":""):"share"+(p.qty>1?"s":"")} · avg {usd(p.avg)}{p.type==="opt"&&p.meta?` · ${daysTo(p.meta.exp)}d left`:` · ${names[p.sym]||""}`}</div>
+                <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}><HealthBadge h={healthMap[p.sym]} T={T}/><EarnChip e={earnMap[p.sym]} T={T}/></div>
+              </div>
+              <div style={{textAlign:"right",fontFamily:T.mono,fontVariantNumeric:"tabular-nums"}}>
+                <div style={{fontSize:13,color:T.text}}>{usd(mk*p.qty*p.mult)}</div>
+                <div style={{fontSize:11,fontWeight:700,color:pl>=0?T.up:T.down}}>{signedUsd(pl)} ({(plp>=0?"+":"")+plp.toFixed(1)}%)</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>onOpen&&onOpen(p.sym)} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:11,cursor:"pointer"}}>Chart</button>
+                {p.type==="stock"
+                  ?<button onClick={()=>{setKind("stock");pickSym(p.sym);setQty(String(p.qty));}} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.down}`,background:`${T.down}14`,color:T.down,fontSize:11,fontWeight:700,cursor:"pointer"}}>Sell</button>
+                  :<button onClick={()=>{setKind("opt");pickSym(p.sym).then(()=>{setRight(p.meta.r);});setExp(p.meta.exp);setQty(String(p.qty));}} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.down}`,background:`${T.down}14`,color:T.down,fontSize:11,fontWeight:700,cursor:"pointer"}}>Sell</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={card}>
+        <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{...lbl,marginRight:6}}>Trade ticket</div>
+          {[["stock","Stocks"],["opt","Options"]].map(([k,l])=>(<button key={k} onClick={()=>{setKind(k);setMsg(null);setQty(k==="opt"?"1":"10");}} style={{padding:"6px 14px",borderRadius:999,border:`1px solid ${kind===k?T.accent:T.border}`,background:kind===k?T.accentBg:"transparent",color:kind===k?T.accent:T.textSub,fontWeight:kind===k?700:500,fontSize:12,cursor:"pointer"}}>{l}</button>))}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+          <TickerSearch value={symIn} onChange={setSymIn} onSelect={pickSym} onKeyDown={e=>{if(e.key==="Enter")pickSym(symIn);}} T={T}/>
+          <button onClick={()=>pickSym(symIn)} style={{padding:"8px 14px",borderRadius:8,border:"none",background:T.accent,color:T.accentInk,fontWeight:700,fontSize:12,cursor:"pointer"}}>Look up</button>
+          {sym&&<span style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:T.text}}>{sym} {px?usd(px):""}</span>}
+        </div>
+
+        {kind==="stock"&&sym&&px&&(
+          <div>
+            <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+              <div style={{flex:"0 0 130px"}}><div style={lbl}>Shares</div><input inputMode="numeric" value={qty} onChange={e=>setQty(e.target.value.replace(/[^0-9]/g,""))} style={inp} aria-label="Shares"/></div>
+              <div style={{fontSize:12,color:T.textSub,paddingBottom:10}}>Est. {usd(px*q)}{stockHeld?` · you hold ${stockHeld.qty}`:""}</div>
+              <button onClick={()=>setQty(String(Math.floor(acc.cash/px)))} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:11,cursor:"pointer",marginBottom:4}}>Max buy</button>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <button onClick={()=>doTrade({key:sym,type:"stock",sym,side:"buy",qty:q,price:px,mult:1,label:sym})} style={btn(T.up,!q)}>Buy {q||""} at {usd(px)}</button>
+              <button onClick={()=>doTrade({key:sym,type:"stock",sym,side:"sell",qty:q,price:px,mult:1,label:sym})} style={btn(T.down,!q||!stockHeld)}>Sell {q||""}</button>
+            </div>
+          </div>
+        )}
+
+        {kind==="opt"&&sym&&(
+          <div>
+            {optErr==="options_not_configured"&&(
+              <div role="alert" style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,fontSize:12,color:T.text,lineHeight:1.6}}>
+                Options data is not connected on this site yet. The site owner needs to add a free Tradier sandbox token (<b>TRADIER_TOKEN</b>) in Vercel. Stock paper trading works without it.
+              </div>
+            )}
+            {optErr&&optErr!=="options_not_configured"&&(
+              <div role="alert" style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${T.down}55`,background:`${T.down}12`,fontSize:12,color:T.text,lineHeight:1.6}}>
+                {optErr==="provider_rate"?"The options provider is busy. Wait a few seconds and try again.":optErr==="provider_auth"?"The options provider rejected the site's token. The site owner should check TRADIER_TOKEN.":"Could not load options right now. Try again in a moment."}
+              </div>
+            )}
+            {!optErr&&!optLoad&&exps.length===0&&<div style={{fontSize:12,color:T.textSub}}>No listed options found for {sym}. Not every stock has them.</div>}
+            {exps.length>0&&(
+              <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,scrollbarWidth:"thin"}} role="tablist" aria-label="Expiration dates">
+                {exps.slice(0,24).map(d=>(<button key={d} role="tab" aria-selected={d===exp} onClick={()=>setExp(d)} style={{flexShrink:0,padding:"6px 11px",borderRadius:999,border:`1px solid ${d===exp?T.accent:T.border}`,background:d===exp?T.accentBg:"transparent",color:d===exp?T.accent:T.textSub,fontSize:11,fontWeight:d===exp?700:500,cursor:"pointer",whiteSpace:"nowrap"}}>{fmtExp(d)} <span style={{opacity:.7}}>{daysTo(d)}d</span></button>))}
+              </div>
+            )}
+            {optLoad&&<LoadTimer T={T} compact label="Loading options chain" expected={5}/>}
+            {chain&&!optLoad&&rows.length>0&&(
+              <div>
+                <div style={{display:"flex",gap:6,margin:"8px 0",alignItems:"center",flexWrap:"wrap"}}>
+                  {[["c","Calls"],["p","Puts"]].map(([k,l])=>(<button key={k} onClick={()=>{setRight(k);setSel(null);}} style={{padding:"5px 14px",borderRadius:999,border:`1px solid ${right===k?T.accent:T.border}`,background:right===k?T.accentBg:"transparent",color:right===k?T.accent:T.textSub,fontWeight:right===k?700:500,fontSize:12,cursor:"pointer"}}>{l}</button>))}
+                  {u0>0&&<span style={{fontSize:11,color:T.textSub}}>Stock {usd(u0)}</span>}
+                  {rows.length>14&&<button onClick={()=>setAllK(v=>!v)} style={{marginLeft:"auto",fontSize:11,padding:"4px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,cursor:"pointer"}}>{allK?"Near the money":"All strikes"}</button>}
+                </div>
+                <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontFamily:T.mono,fontSize:mobile?11:12,fontVariantNumeric:"tabular-nums"}}>
+                    <thead><tr style={{background:T.surfaceB,color:T.textSub,textAlign:"right"}}>{["Strike","Bid","Ask","IV","Delta","Open int."].map((h,i)=>(<th key={h} scope="col" style={{padding:"6px 8px",fontWeight:600,fontSize:10,textAlign:i?"right":"left",whiteSpace:"nowrap"}}>{h}</th>))}</tr></thead>
+                    <tbody>
+                      {shown.map(r=>{
+                        const itm=u0>0&&(right==="c"?r.k<u0:r.k>u0);const on=r.o===sel;
+                        return(<tr key={r.o} onClick={()=>setSel(on?null:r.o)} tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSel(on?null:r.o);}}} aria-selected={on} style={{cursor:"pointer",background:on?T.accentBg:itm?`${T.accent}0D`:"transparent",outline:on?`2px solid ${T.accent}`:"none",outlineOffset:-2,borderTop:`1px solid ${T.border}`,textAlign:"right"}}>
+                          <td style={{padding:"8px",textAlign:"left",fontWeight:700,color:T.text}}>{r.k}{acc.pos[r.o]?" ●":""}</td>
+                          <td style={{padding:"8px",color:T.text}}>{r.b!=null?r.b.toFixed(2):"–"}</td>
+                          <td style={{padding:"8px",color:T.text}}>{r.a!=null?r.a.toFixed(2):"–"}</td>
+                          <td style={{padding:"8px",color:T.textSub}}>{r.iv!=null?(r.iv*100).toFixed(0)+"%":"–"}</td>
+                          <td style={{padding:"8px",color:T.textSub}}>{r.d!=null?r.d.toFixed(2):"–"}</td>
+                          <td style={{padding:"8px",color:T.textSub}}>{r.oi}</td>
+                        </tr>);
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{fontSize:10,color:T.textSub,margin:"6px 0 0"}}>Tinted rows are in the money. Tap a row to pick a contract. One contract controls 100 shares.</div>
+              </div>
+            )}
+            {selRow&&u0>0&&(
+              <div style={{marginTop:12,padding:12,borderRadius:10,border:`1px solid ${T.accent}`,background:T.surfaceB}}>
+                <div style={{fontSize:14,fontWeight:700,color:T.text}}>{optLabel}</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:10,margin:"10px 0"}}>
+                  {stat("You pay (ask)",fillBuy?usd(fillBuy):"n/a")}
+                  {stat("Cost",fillBuy?usd(fillBuy*100*q,0):"n/a")}
+                  {fillBuy&&stat("Breakeven",usd(right==="p"?selRow.k-fillBuy:selRow.k+fillBuy))}
+                  {fillBuy&&stat("Move needed",((right==="p"?(selRow.k-fillBuy)/u0-1:(selRow.k+fillBuy)/u0-1)*100).toFixed(1)+"%")}
+                  {selRow.d!=null&&stat("Delta",selRow.d.toFixed(2))}
+                  {selRow.th!=null&&stat("Theta/day",usd(selRow.th*100*q))}
+                </div>
+                {fillBuy&&<PayoffChart type={right} strike={selRow.k} premium={fillBuy} qty={q||1} under={u0} T={T}/>}
+                <div style={{fontSize:11,color:T.textSub,margin:"4px 0 10px",lineHeight:1.5}}>The most you can lose on a bought option is what you pay. Theta is the value it loses each day if nothing else changes. {daysTo(exp)} days to expiry.</div>
+                <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                  <div style={{flex:"0 0 120px"}}><div style={lbl}>Contracts</div><input inputMode="numeric" value={qty} onChange={e=>setQty(e.target.value.replace(/[^0-9]/g,""))} style={inp} aria-label="Contracts"/></div>
+                  {heldSel&&<span style={{fontSize:12,color:T.textSub,paddingBottom:10}}>You hold {heldSel.qty}</span>}
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <button disabled={!q||!fillBuy} onClick={()=>doTrade({key:selRow.o,type:"opt",sym,side:"buy",qty:q,price:fillBuy,mult:100,meta:optMeta,label:optLabel})} style={btn(T.up,!q||!fillBuy)}>Buy to open at {fillBuy?usd(fillBuy):"–"}</button>
+                  <button disabled={!q||!heldSel||!fillSell} onClick={()=>doTrade({key:selRow.o,type:"opt",sym,side:"sell",qty:q,price:fillSell,mult:100,meta:optMeta,label:optLabel})} style={btn(T.down,!q||!heldSel||!fillSell)}>Sell to close{fillSell?` at ${usd(fillSell)}`:""}</button>
+                </div>
+              </div>
+            )}
+            <div style={{fontSize:10,color:T.textSub,marginTop:8,lineHeight:1.5}}>{PAPER_NOTE_OPT}</div>
+          </div>
+        )}
+        {!sym&&<div style={{fontSize:12,color:T.textSub,lineHeight:1.6}}>Search a ticker to trade it with virtual money. Stock paper trades fill at the live price. Long positions only for now: buy, then sell to close.</div>}
+        {msg&&<div role="status" style={{marginTop:10,padding:"8px 10px",borderRadius:8,fontSize:12,border:`1px solid ${msg.bad?T.down:T.up}55`,background:`${msg.bad?T.down:T.up}12`,color:T.text}}>{msg.t}</div>}
+      </div>
+
+      <div style={card}>
+        <div style={{...lbl,marginBottom:6}}>History</div>
+        {!acc.trades.length&&<div style={{fontSize:12,color:T.textSub}}>Your trades will be listed here.</div>}
+        {acc.trades.slice(0,25).map((t,i)=>(
+          <div key={t.t+"-"+i} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"7px 0",borderTop:i?`1px solid ${T.border}`:"none",flexWrap:"wrap"}}>
+            <span style={{color:T.text,minWidth:0,overflowWrap:"anywhere"}}><b style={{color:t.side==="buy"?T.up:T.down}}>{t.side==="buy"?"Bought":"Sold"}</b> {t.qty} {posLabel({type:t.type,sym:t.sym,meta:t.meta})} at {usd(t.price)}{t.note?` (${t.note})`:""}</span>
+            <span style={{fontFamily:T.mono,color:t.pl==null?T.textSub:t.pl>=0?T.up:T.down}}>{t.pl==null?new Date(t.t).toLocaleDateString("en-US",{month:"short",day:"numeric"}):signedUsd(t.pl)}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:10,color:T.textSub,textAlign:"center",lineHeight:1.6,padding:"0 8px"}}>Paper trading uses virtual money for learning. Results do not predict real trading, which includes fees, slippage and emotions. Not financial advice.</div>
+    </div>
+  );
+}
+
 const SECTIONS=[
   {id:"overview",label:"Overview"},
   {id:"watchlist",label:"Watchlist"},
   {id:"earnings",label:"Earnings"},
   {id:"playbooks",label:"Playbooks"},
+  {id:"paper",label:"Paper trading",short:"Paper"},
   {id:"concierge",label:"Concierge"},
   {id:"settings",label:"Settings"},
 ];
@@ -4160,6 +4895,7 @@ function NavIcon({k,c}){
     watchlist:"M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
     earnings:"M7 3v3M17 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8 13h3",
     playbooks:"M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5",
+    paper:"M4 19V5M4 19h16M8 15l3-4 3 2 5-7M16 6h3v3",
     concierge:"M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4v-4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
     settings:"M4 7h9M17 7h3M4 17h3M11 17h9M15 4v6M9 14v6",
   };
@@ -4208,6 +4944,7 @@ function SectionNav({T,sec,onSelect,badges,mobile}){
 
 export default function StockScreener(){
   const [prefs,setPrefs]=useState(loadPrefs);
+  UI_ZOOM=(prefs.text||100)/100;
   const [sysDark,setSysDark]=useState(()=>{try{return window.matchMedia("(prefers-color-scheme: dark)").matches;}catch{return true;}});
   useEffect(()=>{
     let mq;try{mq=window.matchMedia("(prefers-color-scheme: dark)");}catch{return undefined;}
@@ -4496,6 +5233,7 @@ export default function StockScreener(){
         html,body,#root{margin:0;padding:0;background:${T.bg};}
         *{box-sizing:border-box;}
         @keyframes pulse  {0%,100%{opacity:1}50%{opacity:0.3}}
+        @keyframes tfbar {0%{margin-left:-35%}100%{margin-left:100%}}
         @keyframes fadeUp {from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes shimmer{0%,100%{opacity:0.5}50%{opacity:0.9}}
         @keyframes purpleGlow{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 3px ${T.accent}55}}
@@ -4571,6 +5309,9 @@ export default function StockScreener(){
       </div>
       <div role="tabpanel" style={{display:sec==="playbooks"?"block":"none"}}>
         <PlaybooksPanel embedded T={T} names={names} tabSymbols={curTab.stocks.map(x=>x.s)} onAdd={sym=>addTickerBySymbol(sym)}/>
+      </div>
+      <div role="tabpanel" style={{display:sec==="paper"?"block":"none"}}>
+        <PaperPanel T={T} active={sec==="paper"} mobile={isMobile} names={names} healthMap={healthMap} earnMap={earnMap} onOpen={sym=>{if(allSymbols.includes(sym))pickSymbol(sym);else addTickerBySymbol(sym);}}/>
       </div>
       <div role="tabpanel" style={{display:sec==="concierge"?"block":"none"}}>
         <ConciergePanel mobile={isMobile} detail={prefs.ccDetail} embedded T={T} stocks={allStocks} healthMap={healthMap} earnMap={earnMap} symbols={allSymbols}/>
