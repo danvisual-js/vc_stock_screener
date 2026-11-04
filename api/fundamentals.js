@@ -205,6 +205,13 @@ async function one(sym, KEY, lite, debug) {
     fcfPerShare: first(m, ["freeCashFlowPerShareTTM", "cashFlowPerShareTTM"]),
     beta: first(m, ["beta"]),
     avgVolShares: avgVolShares !== null ? avgVolShares * 1e6 : null, // Finnhub reports millions of shares
+    v: 2,
+    divYieldPct: first(m, ["currentDividendYieldTTM", "dividendYieldIndicatedAnnual"]),
+    ret5d: first(m, ["5DayPriceReturnDaily"]),
+    ret13w: first(m, ["13WeekPriceReturnDaily"]),
+    retYTD: first(m, ["yearToDatePriceReturnDaily"]),
+    w52High: first(m, ["52WeekHigh"]),
+    w52Low: first(m, ["52WeekLow"]),
     tech: tech || null,
     ratingDrift: ratingDrift(recs),
     lastSurprisePct,

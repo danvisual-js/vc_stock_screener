@@ -253,7 +253,7 @@ footer{padding-block:34px 60px;border-top:1px solid var(--line);color:var(--mute
       var btn = f.querySelector("button");
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em)) { show(out, "<span class='err'>Enter a valid email address.</span>"); return; }
       btn.disabled = true; var old = btn.textContent; btn.textContent = "Joining…";
-      fetch("/api/waitlist", { method: "POST", headers: { "Content-Type": "application/json" },
+      fetch("/api/subscribe?kind=beta", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: em, website: f.elements.website.value, source: src || "lander" }) })
         .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
         .then(function(x){

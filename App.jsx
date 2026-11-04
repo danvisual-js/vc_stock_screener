@@ -228,7 +228,7 @@ async function fetchUpgradesHistory(symbol){
 // Fetch earnings beat/miss history from /api/earnings
 async function fetchEarningsHistory(symbol){
   try{
-    const r=await fetch(`/api/earnings?symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(7000)});
+    const r=await fetch(`/api/events?kind=history&symbol=${encodeURIComponent(symbol)}`,{signal:AbortSignal.timeout(7000)});
     if(!r.ok)return[];
     return await r.json();
   }catch{return[];}
@@ -349,7 +349,7 @@ Write 3 concise bullets: (1) overall market direction with specific %, (2) stand
         {/* Error */}
         {error&&<div style={{fontSize:11,color:T.down,marginBottom:10,padding:"8px 10px",background:`${T.down}10`,borderRadius:6,lineHeight:1.5}}>⚠ {error}</div>}
         {/* Loading */}
-        {loading&&<div style={{display:"flex",alignItems:"center",gap:8,color:T.textSub,fontSize:11}}><span style={{animation:"pulse 1.2s infinite",fontSize:14}}>✦</span>Generating… (10–20s)</div>}
+        {loading&&<LoadTimer T={T} label="Writing your brief" expected={15}/>}
         {/* Generate button — shown when no brief and not loading */}
         {!brief&&!loading&&(
           <div style={{textAlign:"center",padding:"4px 0 8px"}}>
@@ -427,7 +427,7 @@ function IntelligenceFeed({stocks,news,symbols,T}){
         </div>
         <div style={{maxHeight:340,overflowY:"auto"}}>
           {!watchlist.length
-            ?<div style={{padding:"14px 12px",fontSize:11,color:T.textSub}}>Loading…</div>
+            ?<div style={{padding:"4px 12px"}}><LoadTimer T={T} compact label="Loading your watchlist" expected={6}/></div>
             :watchlist.map((item,i)=>ROW(item,i,watchlist))
           }
         </div>
@@ -443,7 +443,7 @@ function IntelligenceFeed({stocks,news,symbols,T}){
         </div>
         <div>
           {!articles.length
-            ?<div style={{padding:"14px 12px",fontSize:11,color:T.textSub}}>Loading news…</div>
+            ?<div style={{padding:"4px 12px"}}><LoadTimer T={T} compact label="Loading news" expected={6}/></div>
             :visNews.map((n,i)=>(
               <a key={i} href={n.url||n.link||"#"} target="_blank" rel="noreferrer"
                 style={{display:"flex",gap:8,padding:"9px 12px",borderBottom:i<visNews.length-1?`1px solid ${T.border}`:"none",textDecoration:"none",cursor:"pointer"}}>
@@ -1262,7 +1262,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
             <button key={mode} onClick={e=>{e.stopPropagation();setDrawMode(m=>m===mode?null:mode);setDrawStart(null);}}
               title={drawMode===mode&&mode==='trend'&&drawStart?"Click 2nd point to finish":lbl}
               style={{...bsz,fontWeight:700,borderRadius:8,border:`1.5px solid ${drawMode===mode?col:T.border}`,
-                background:drawMode===mode?`${col}22`:"rgba(15,16,24,0.9)",
+                background:drawMode===mode?`${col}22`:`${T.surface}F2`,
                 color:drawMode===mode?col:T.text,cursor:"pointer",
                 boxShadow:drawMode===mode?`0 0 0 1px ${col}40`:"none",
                 backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
@@ -1276,7 +1276,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
           return(<button onClick={e=>{e.stopPropagation();setDrawings([]);setDrawMode(null);setDrawStart(null);setSelDraw(null);}}
             title="Clear all drawings"
             style={{padding:mob?"7px 14px":"4px 10px",fontSize:mob?13:10,fontWeight:700,borderRadius:8,
-              border:`1.5px solid ${T.border}`,background:"rgba(15,16,24,0.9)",
+              border:`1.5px solid ${T.border}`,background:`${T.surface}F2`,
               color:T.down,cursor:"pointer",backdropFilter:"blur(4px)",minHeight:mob?44:undefined}}>
             ✕ Clear all
           </button>);
@@ -1639,6 +1639,27 @@ const GLOSSARY={
   oversold:{term:"Oversold Blue Chips",cat:"Playbooks",
     short:"Large, established companies whose recent fall pushed RSI low.",
     why:"Pros hunt for panic dips in quality names, then check that nothing is actually broken in the business."},
+  quality:{term:"Quality Compounders",cat:"Playbooks",
+    short:"Highly profitable companies that keep growing without piling on debt.",
+    why:"Long-term investors like businesses that turn sales into real profit and cash, and reinvest at high returns. These are rarely cheap, so the price still matters."},
+  dividend:{term:"Dividend Defenders",cat:"Playbooks",
+    short:"Steady, profitable companies that pay you a regular dividend.",
+    why:"A decent yield is only safe if the company is profitable and not overloaded with debt. A very high yield can be a warning sign, not a bargain."},
+  momentum:{term:"Momentum Leaders",cat:"Playbooks",
+    short:"Stocks that have been rising steadily and are still near their highs.",
+    why:"Strong trends tend to persist for a while, but they can reverse quickly. Momentum is about the trend, not about value."},
+  value:{term:"Deep Value",cat:"Playbooks",
+    short:"Profitable companies priced low compared with their earnings.",
+    why:"A low P/E can mean a bargain or a business in trouble. Checking profits, debt and sales growth helps tell the two apart."},
+  opmargin:{term:"Operating Margin",cat:"Financial health",
+    short:"The share of each sales dollar left after running costs, before interest and tax.",
+    why:"High and stable operating margins usually signal pricing power or an efficient business."},
+  divyield:{term:"Dividend Yield",cat:"Valuation",
+    short:"Yearly dividend divided by the share price.",
+    why:"A 3% yield pays $3 a year per $100 invested. Yields that are far above peers often mean the market expects a cut."},
+  ret13w:{term:"13-week Return",cat:"Trading",
+    short:"How much the price changed over about three months.",
+    why:"Pros use it to see the medium-term trend. Large drops and large gains both tell you what the crowd has been doing."},
 };
 const GLOSSARY_CATS=["Valuation","Financial health","Trading","Technicals","Risk","Analysts","Playbooks"];
 function openGlossary(k){
@@ -1780,7 +1801,7 @@ function GlossarySheet({T,focus,onClose}){
 /* ════════════════════════════════════════════════════
    FUNDAMENTALS CLIENT — cached batch fetch from /api/fundamentals
 ════════════════════════════════════════════════════ */
-const FUND_KEY="screener_fund_v1";
+const FUND_KEY="screener_fund_v2";
 function readFundCache(){try{return JSON.parse(localStorage.getItem(FUND_KEY)||"{}")||{};}catch{return {};}}
 function writeFundCache(c){try{localStorage.setItem(FUND_KEY,JSON.stringify(c));}catch{}}
 async function fetchFundamentals(syms,opts){
@@ -1793,7 +1814,7 @@ async function fetchFundamentals(syms,opts){
   const need=[];
   syms.forEach(s=>{
     const c=cache[s];
-    if(!o.force&&c&&now-c.fetchedAt<maxAge&&(lite||!c.lite))out[s]=c;else need.push(s);
+    if(!o.force&&c&&c.v===2&&now-c.fetchedAt<maxAge&&(lite||!c.lite))out[s]=c;else need.push(s);
   });
   if(o.onBatch&&Object.keys(out).length)o.onBatch(Object.assign({},out));
   const batches=[];
@@ -1817,6 +1838,23 @@ async function fetchFundamentals(syms,opts){
     }
   };
   await Promise.all([worker(),worker()]);
+  // one gentle retry for tickers the data provider skipped (rate limits, slow responses)
+  const lost=need.filter(x=>!out[x]);
+  if(lost.length&&lost.length<need.length+1){
+    await new Promise(r=>setTimeout(r,1500));
+    for(let i=0;i<lost.length;i+=6){
+      const b=lost.slice(i,i+6);
+      try{
+        const r=await fetch(`/api/fundamentals?symbols=${b.join(",")}${lite?"&lite=1":""}`,{signal:AbortSignal.timeout(25000)});
+        if(!r.ok||(r.headers.get("content-type")||"").indexOf("json")<0)continue;
+        const j=await r.json();
+        const d=j.data||{};
+        const got={};
+        Object.keys(d).forEach(x=>{if(d[x]&&(d[x].hasMetrics||d[x].tech)){out[x]=d[x];fresh[x]=d[x];got[x]=d[x];}});
+        if(o.onBatch&&Object.keys(got).length)o.onBatch(got);
+      }catch{}
+    }
+  }
   if(Object.keys(fresh).length){
     const latest=readFundCache();
     Object.assign(latest,fresh);
@@ -2010,6 +2048,13 @@ function HealthPanel({h,loading,T}){
    TRADER PLAYBOOKS — ready-made scans over ~50 popular stocks
 ════════════════════════════════════════════════════ */
 const okc=(pass,close)=>pass===true?"pass":pass===false?(close?"close":"fail"):"nodata";
+const dipOf=f=>{
+  const rsi=f.tech&&f.tech.rsi!=null?f.tech.rsi:null;
+  if(rsi!=null)return{kind:"rsi",v:rsi};
+  if(f.ret5d!=null)return{kind:"ret",v:f.ret5d};
+  return null;
+};
+const sgn=n=>(n>=0?"+":"")+n.toFixed(1)+"%";
 const PLAYBOOKS=[
   {id:"garp",name:"GARP",tagline:"Growth at a reasonable price",term:"garp",
     blurb:"Companies growing fast that are not wildly expensive, are actually profitable and do not carry heavy debt.",
@@ -2023,7 +2068,7 @@ const PLAYBOOKS=[
       return [
         {id:"peg",term:"peg",label:"PEG under 1.5",got:peg!=null?"PEG "+peg.toFixed(2):"no data",
           state:peg==null?"nodata":okc(peg>0&&peg<1.5,peg>0&&peg<2)},
-        {id:"rev",term:"revgrowth",label:"Revenue growth over 10%",got:f.revGrowthPct!=null?"Sales "+(f.revGrowthPct>=0?"+":"")+f.revGrowthPct.toFixed(0)+"%":"no data",
+        {id:"rev",term:"revgrowth",label:"Revenue growth over 10%",got:f.revGrowthPct!=null?"Sales "+sgn(f.revGrowthPct).replace(".0%","%"):"no data",
           state:f.revGrowthPct==null?"nodata":okc(f.revGrowthPct>10,f.revGrowthPct>7)},
         {id:"prof",term:"margin",label:"Profitable",got:profitable==null?"no data":profitable?"Profitable"+(f.netMarginPct!=null?" ("+f.netMarginPct.toFixed(0)+"% margin)":""):"Not profitable",
           state:profitable==null?"nodata":okc(profitable,false)},
@@ -2032,17 +2077,21 @@ const PLAYBOOKS=[
       ];
     }},
   {id:"oversold",name:"Oversold Blue Chips",tagline:"Big, established names on a sharp dip",term:"oversold",
-    blurb:"Companies worth over $50B whose RSI has dropped under 35, the kind of dip pros watch for a bounce. Check the health badge before trusting a dip.",
-    sortLabel:"Lowest RSI first",
-    rank:(f)=>f.tech&&f.tech.rsi!=null?f.tech.rsi:99,
+    blurb:"Companies worth over $50B that have pulled back hard (RSI under 35, or down 4% or more in 5 days when price history is unavailable), without being in a free fall. Check the health badge before trusting a dip.",
+    sortLabel:"Deepest dip first",
+    rank:(f)=>{const d=dipOf(f);return d?(d.kind==="rsi"?d.v:50+d.v*3):99;},
     criteria:(f)=>{
       const cap=f.marketCapM;
-      const rsi=f.tech?f.tech.rsi:null;
+      const d=dipOf(f);
+      const r13=f.ret13w;
       return [
         {id:"cap",term:"mktcap",label:"Market cap over $50B",got:cap!=null?"Cap "+fmtMoneyM(cap):"no data",
           state:cap==null?"nodata":okc(cap>50000,cap>30000)},
-        {id:"rsi",term:"rsi",label:"RSI under 35",got:rsi!=null?"RSI "+rsi.toFixed(0):"no data",
-          state:rsi==null?"nodata":okc(rsi<35,rsi<40)},
+        d&&d.kind==="ret"
+          ?{id:"dip",term:"ret13w",label:"5-day return of -4% or worse",got:"5-day "+sgn(d.v),state:okc(d.v<=-4,d.v<=-2)}
+          :{id:"dip",term:"rsi",label:"RSI under 35",got:d?"RSI "+d.v.toFixed(0):"no data",state:d?okc(d.v<35,d.v<45):"nodata"},
+        {id:"free",term:"ret13w",opt:true,label:"Down less than 30% in 13 weeks",got:r13!=null?"13-wk "+sgn(r13):"no data",
+          state:r13==null?"nodata":okc(r13>-30,r13>-40)},
       ];
     }},
   {id:"breakout",name:"High Relative Volume Breakouts",tagline:"Momentum with real participation",term:"breakout",
@@ -2056,28 +2105,92 @@ const PLAYBOOKS=[
           state:t.relVol==null?"nodata":okc(t.relVol>=2,t.relVol>=1.5)},
         {id:"hi",term:"breakout",label:"At a 20-day high",got:t.high20!=null&&t.price!=null?(t.atHigh20?"At 20-day high":((t.price/t.high20-1)*100).toFixed(1)+"% from high"):"no data",
           state:t.high20==null||t.price==null?"nodata":okc(!!t.atHigh20,t.price>=t.high20*0.97)},
-        {id:"up",term:"rs",label:"Up on the day",got:t.changePct!=null?(t.changePct>=0?"+":"")+t.changePct.toFixed(1)+"% today":"no data",
+        {id:"up",term:"rs",label:"Up on the day",got:t.changePct!=null?sgn(t.changePct)+" today":"no data",
           state:t.changePct==null?"nodata":okc(t.changePct>0,false)},
+      ];
+    }},
+  {id:"quality",name:"Quality Compounders",tagline:"High profit, steady growth, low debt",term:"quality",
+    blurb:"Companies that keep more than 20% of sales as operating profit, are still growing, and do not lean on debt. They are rarely cheap, so check the price too.",
+    sortLabel:"Highest operating margin first",
+    rank:(f)=>-(f.opMarginPct!=null?f.opMarginPct:(f.netMarginPct!=null?f.netMarginPct:0)),
+    criteria:(f,sector)=>{
+      const mg=f.opMarginPct!=null?f.opMarginPct:f.netMarginPct;
+      const de=f.debtToEquity;
+      const deNA=sector==="fin";
+      return [
+        {id:"mg",term:"opmargin",label:"Operating margin over 20%",got:mg!=null?"Margin "+mg.toFixed(0)+"%":"no data",state:mg==null?"nodata":okc(mg>20,mg>15)},
+        {id:"rev",term:"revgrowth",label:"Revenue growth over 8%",got:f.revGrowthPct!=null?"Sales "+sgn(f.revGrowthPct):"no data",state:f.revGrowthPct==null?"nodata":okc(f.revGrowthPct>8,f.revGrowthPct>5)},
+        {id:"debt",term:"de",label:"Debt-to-equity under 1",got:deNA?"n/a for financials":de!=null?(de<0?"Negative equity":"D/E "+de.toFixed(2)):"no data",state:deNA?"pass":de==null?"nodata":okc(de>=0&&de<1,de>=0&&de<1.5)},
+        {id:"fcf",term:"fcf",opt:true,label:"Positive free cash flow",got:f.fcfTTM!=null?"FCF "+fmtMoneyM(f.fcfTTM):"no data",state:f.fcfTTM==null?"nodata":okc(f.fcfTTM>0,false)},
+      ];
+    }},
+  {id:"dividend",name:"Dividend Defenders",tagline:"Steady payers you can sleep on",term:"dividend",
+    blurb:"Profitable companies yielding 2% or more with manageable debt and lower-than-market swings. Very high yields are not rewarded here, because they often signal trouble.",
+    sortLabel:"Highest yield first",
+    rank:(f)=>-(f.divYieldPct!=null?f.divYieldPct:0),
+    criteria:(f,sector)=>{
+      const y=f.divYieldPct,de=f.debtToEquity,deNA=sector==="fin";
+      return [
+        {id:"y",term:"divyield",label:"Dividend yield 2% to 8%",got:y!=null?"Yield "+y.toFixed(1)+"%":"no data",state:y==null?"nodata":okc(y>=2&&y<=8,y>=1.5&&y<=10)},
+        {id:"prof",term:"margin",label:"Profitable",got:f.netMarginPct!=null?"Margin "+f.netMarginPct.toFixed(0)+"%":"no data",state:f.netMarginPct==null?"nodata":okc(f.netMarginPct>0,false)},
+        {id:"debt",term:"de",label:"Debt-to-equity under 1.5",got:deNA?"n/a for financials":de!=null?(de<0?"Negative equity":"D/E "+de.toFixed(2)):"no data",state:deNA?"pass":de==null?"nodata":okc(de>=0&&de<1.5,de>=0&&de<2)},
+        {id:"beta",term:"beta",opt:true,label:"Beta under 1",got:f.beta!=null?"Beta "+f.beta.toFixed(2):"no data",state:f.beta==null?"nodata":okc(f.beta<1,f.beta<1.15)},
+      ];
+    }},
+  {id:"momentum",name:"Momentum Leaders",tagline:"Strong trends near their highs",term:"momentum",
+    blurb:"Stocks up more than 10% over the last 13 weeks, positive this week and still near their 52-week high. Trends can reverse fast, so size positions carefully.",
+    sortLabel:"Biggest 13-week gain first",
+    rank:(f)=>-(f.ret13w!=null?f.ret13w:-99),
+    criteria:(f)=>{
+      const r=f.ret13w,w=f.ret5d;
+      const px=f.tech&&f.tech.price!=null?f.tech.price:null;
+      const hi=f.w52High;
+      const near=px!=null&&hi!=null?px/hi:null;
+      return [
+        {id:"r13",term:"ret13w",label:"Up more than 10% in 13 weeks",got:r!=null?"13-wk "+sgn(r):"no data",state:r==null?"nodata":okc(r>10,r>5)},
+        {id:"r5",term:"rs",label:"Positive over 5 days",got:w!=null?"5-day "+sgn(w):"no data",state:w==null?"nodata":okc(w>0,w>-1.5)},
+        {id:"hi",term:"breakout",opt:true,label:"Within 8% of the 52-week high",got:near!=null?((near-1)*100).toFixed(1)+"% from high":"no data",state:near==null?"nodata":okc(near>=0.92,near>=0.85)},
+      ];
+    }},
+  {id:"value",name:"Deep Value",tagline:"Profitable and priced low",term:"value",
+    blurb:"Profitable companies trading under 15x earnings with sales that are not shrinking and debt under control. Cheap can be a trap, so the health badge matters here.",
+    sortLabel:"Lowest P/E first",
+    rank:(f)=>f.pe!=null&&f.pe>0?f.pe:99,
+    criteria:(f,sector)=>{
+      const pe=f.pe,de=f.debtToEquity,deNA=sector==="fin";
+      return [
+        {id:"pe",term:"pe",label:"P/E under 15",got:pe!=null?(pe>0?"P/E "+pe.toFixed(1):"No earnings"):"no data",state:pe==null?"nodata":okc(pe>0&&pe<15,pe>0&&pe<18)},
+        {id:"prof",term:"margin",label:"Net margin over 5%",got:f.netMarginPct!=null?"Margin "+f.netMarginPct.toFixed(0)+"%":"no data",state:f.netMarginPct==null?"nodata":okc(f.netMarginPct>5,f.netMarginPct>2)},
+        {id:"rev",term:"revgrowth",label:"Sales not shrinking",got:f.revGrowthPct!=null?"Sales "+sgn(f.revGrowthPct):"no data",state:f.revGrowthPct==null?"nodata":okc(f.revGrowthPct>=0,f.revGrowthPct>-3)},
+        {id:"debt",term:"de",label:"Debt-to-equity under 1.5",got:deNA?"n/a for financials":de!=null?(de<0?"Negative equity":"D/E "+de.toFixed(2)):"no data",state:deNA?"pass":de==null?"nodata":okc(de>=0&&de<1.5,de>=0&&de<2)},
       ];
     }},
 ];
 function evalPlaybook(pb,uni){
   const matches=[];
   const near=[];
+  const rest=[];
+  let nodataRows=0;
   Object.keys(uni).forEach(sym=>{
     const f=uni[sym];
     const sector=SECTOR_OF[sym];
     const cr=pb.criteria(f,sector);
-    const passN=cr.filter(c=>c.state==="pass").length;
-    const closeN=cr.filter(c=>c.state==="close").length;
-    const failN=cr.filter(c=>c.state==="fail"||c.state==="nodata").length;
-    const row={sym,f,cr,rank:pb.rank(f),health:computeHealth(f,sector)};
-    if(passN===cr.length)matches.push(row);
-    else if(failN===0&&closeN>0)near.push(row);
+    const eff=cr.filter(c=>!(c.opt&&c.state==="nodata"));
+    const passN=eff.filter(c=>c.state==="pass").length;
+    const closeN=eff.filter(c=>c.state==="close").length;
+    const failN=eff.filter(c=>c.state==="fail").length;
+    const noN=eff.filter(c=>c.state==="nodata").length;
+    const row={sym,f,cr,rank:pb.rank(f),health:computeHealth(f,sector),score:passN*2+closeN};
+    if(noN===eff.length){nodataRows++;return;}
+    if(passN===eff.length)matches.push(row);
+    else if(failN===0&&noN===0&&closeN>0)near.push(row);
+    else if(passN+closeN>0)rest.push(row);
   });
-  matches.sort((a,b)=>a.rank-b.rank);
-  near.sort((a,b)=>a.rank-b.rank);
-  return {matches,near:near.slice(0,8)};
+  const byRank=(a,b)=>a.rank-b.rank;
+  matches.sort(byRank);
+  near.sort(byRank);
+  rest.sort((a,b)=>b.score-a.score||a.rank-b.rank);
+  return {matches,near:near.slice(0,8),closest:(matches.length+near.length===0)?rest.slice(0,6):[],nodataRows};
 }
 function PlaybookRow({row,names,T,inList,onAdd}){
   const st={pass:{c:T.up,m:"✓"},close:{c:"#F59E0B",m:"≈"},fail:{c:T.down,m:"✕"},nodata:{c:T.textSub,m:"?"}};
@@ -2113,11 +2226,13 @@ function PlaybooksPanel({T,names,tabSymbols,onAdd,embedded}){
   const [loading,setLoading]=useState(false);
   const [ranAt,setRanAt]=useState(null);
   const [showNear,setShowNear]=useState(true);
+  const [missing,setMissing]=useState(0);
   useEffect(()=>{try{localStorage.setItem("screener_pb_open",open?"1":"0");}catch{}},[open]);
   const run=async(id,force)=>{
     setPbId(id);setLoading(true);
     try{
-      await fetchFundamentals(POPULAR_50,{lite:true,maxAge:30*60e3,force:!!force,onBatch:m=>setUni(p=>Object.assign({},p,m))});
+      const got=await fetchFundamentals(POPULAR_50,{lite:true,maxAge:30*60e3,force:!!force,onBatch:m=>setUni(p=>Object.assign({},p,m))});
+      setMissing(POPULAR_50.filter(x=>!got[x]).length);
       setRanAt(new Date());
     }finally{setLoading(false);}
   };
@@ -2152,18 +2267,33 @@ function PlaybooksPanel({T,names,tabSymbols,onAdd,embedded}){
                   <HelpTerm k={pb.term} T={T}><b>{pb.name}</b></HelpTerm>{": "}{pb.blurb}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6,fontSize:10,color:T.textSub,flexWrap:"wrap"}}>
-                  <span>{loading?`Scanning… ${scanned}/${POPULAR_50.length}`:`${scanned} stocks scanned${ranAt?" at "+ranAt.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}):""}`}</span>
+                  <span>{loading?"Scanning…":`${scanned} stocks scanned${ranAt?" at "+ranAt.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}):""}`}</span>
                   <span>{pb.sortLabel}</span>
                   <button onClick={()=>run(pb.id,true)} disabled={loading} style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.textSub,fontSize:10,cursor:loading?"default":"pointer",fontFamily:T.sans}}>Rescan</button>
                 </div>
               </div>
-              {res&&(
+              {loading&&<div style={{padding:"0 16px 10px"}}><LoadTimer T={T} label="Scanning 50 popular stocks" expected={25} done={scanned} total={POPULAR_50.length}/></div>}
+              {!loading&&scanned===0&&(
+                <div role="alert" style={{margin:"0 16px 12px",padding:"10px 12px",borderRadius:8,border:`1px solid ${T.down}55`,background:`${T.down}12`,fontSize:11,color:T.text,lineHeight:1.55}}>
+                  The scan could not load any data. This usually means the market-data provider is busy or a key is missing on the server. Wait a minute and press Rescan.
+                </div>
+              )}
+              {!loading&&scanned>0&&missing>0&&(
+                <div style={{margin:"0 16px 10px",fontSize:10,color:T.textSub,lineHeight:1.5}}>{missing} of {POPULAR_50.length} stocks had no data this time (the provider limits how fast it answers). Press Rescan to fill them in.</div>
+              )}
+              {res&&scanned>0&&(
                 <div>
                   <div style={{padding:"6px 16px",fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,background:T.surfaceB}}>Matches ({res.matches.length})</div>
                   {res.matches.length===0&&!loading&&(
                     <div style={{padding:"12px 16px",fontSize:11,color:T.textSub,lineHeight:1.5}}>No stock meets every rule right now. That is normal for strict scans, and a good lesson: good setups are rare. The closest candidates are below.</div>
                   )}
                   {res.matches.map(r=>(<PlaybookRow key={r.sym} row={r} names={names} T={T} inList={tabSymbols.indexOf(r.sym)>=0} onAdd={()=>onAdd(r.sym)}/>))}
+                  {res.closest.length>0&&(
+                    <div>
+                      <div style={{padding:"6px 16px",fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,background:T.surfaceB}}>Closest candidates ({res.closest.length})</div>
+                      {res.closest.map(r=>(<PlaybookRow key={r.sym} row={r} names={names} T={T} inList={tabSymbols.indexOf(r.sym)>=0} onAdd={()=>onAdd(r.sym)}/>))}
+                    </div>
+                  )}
                   {res.near.length>0&&(
                     <div>
                       <button onClick={()=>setShowNear(v=>!v)} style={{width:"100%",textAlign:"left",padding:"6px 16px",fontSize:9,fontWeight:700,letterSpacing:".09em",textTransform:"uppercase",color:T.textSub,background:T.surfaceB,border:"none",borderTop:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.sans}}>
@@ -2382,7 +2512,7 @@ function EarningsWeek({symbols,stocks,healthMap,names,T,onWatch,onPick,onAdd,emb
             <EwChip label="Watch flags" value={watchN} color={watchN?"#F59E0B":T.text} T={T}/>
           </div>
 
-          {loading&&<div style={{fontSize:11,color:T.textSub,animation:"pulse 1.2s infinite",padding:"6px 0"}}>Loading this week's earnings…</div>}
+          {loading&&<LoadTimer T={T} label="Loading this week's earnings" expected={8}/>}
           {!loading&&err&&<div style={{fontSize:11,color:T.textSub,padding:"6px 0",lineHeight:1.5}}>{err}. Check that the api folder is deployed and FINNHUB_API_KEY is set in Vercel.</div>}
           {!loading&&!err&&data&&data.fallback&&<div style={{fontSize:10,color:T.textSub,padding:"0 0 8px",lineHeight:1.5}}>Showing your watchlist tickers only: the market-wide calendar (api/earnings-week) returned {data.reason}. Deploy that file to see all big reports.</div>}
 
@@ -2588,7 +2718,8 @@ function IndexChart({index,T}){
         </div>
       </div>
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
-      <div>
+      {chartLoading&&<div style={{padding:"4px 0 10px"}}><LoadTimer T={T} compact label={"Loading "+index.name+" chart"} expected={4}/></div>}
+      <div style={{opacity:chartLoading?0.35:1,transition:"opacity .2s"}}>
         {chartMode==="candle"
           ?<CandleChart data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={index.s} tf={tf} chartH={window.innerWidth<640?460:210}/>
           :<LineChartView data={data} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={185} accent={col}/>
@@ -2802,12 +2933,13 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,h
   const {s,p,pc,loading:ld}=stock;
   const ch=pct(p||0,pc||1);
   return(
-    <div onClick={onClick} style={{display:"flex",alignItems:"center",padding:"10px 16px 10px 14px",borderBottom:`1px solid ${T.border}`,background:selected?T.accentBg:"transparent",cursor:"pointer",transition:"background 0.1s",gap:10,minHeight:48}}>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontFamily:T.sans,fontSize:13,fontWeight:700,color:T.text}}>{s}</div>
-        <div style={{fontSize:10,color:T.textSub,fontFamily:T.sans}}>{ld?"Fetching…":(names[s]||s)}</div>
+    <div className="lr-wrap" style={{borderBottom:`1px solid ${T.border}`,background:selected?T.accentBg:"transparent"}}>
+    <div onClick={onClick} style={{display:"flex",alignItems:"center",padding:"10px 16px 10px 14px",cursor:"pointer",transition:"background 0.1s",gap:10,minHeight:48}}>
+      <div style={{flex:"1 1 72px",minWidth:72}}>
+        <div style={{fontFamily:T.sans,fontSize:13,fontWeight:700,color:T.text,whiteSpace:"nowrap"}}>{s}</div>
+        <div style={{fontSize:10,color:T.textSub,fontFamily:T.sans,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{ld?"Fetching…":(names[s]||s)}</div>
       </div>
-      {!ld&&p>0&&<div style={{flexShrink:0}}><Sparkline price={p} changePct={ch} T={T} w={64} h={24}/></div>}
+      {!ld&&p>0&&<div className="lr-spark" style={{flexShrink:0,width:64,height:24,overflow:"hidden"}}><Sparkline price={p} changePct={ch} T={T} w={64} h={24}/></div>}
       <div style={{textAlign:"right",minWidth:60}}>
         <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.sans,fontVariantNumeric:"tabular-nums"}}>{p<1?`$${p.toFixed(4)}`:`$${f2(p)}`}</div>
       </div>
@@ -2815,6 +2947,7 @@ function ListRow({stock,selected,onClick,removable,onRemove,names,T,refreshing,h
       {!ld&&<HealthBadge h={health} T={T}/>}
       {!ld&&!refreshing&&<DailyChange p={p} pc={pc} T={T}/>}
       {removable&&<button onClick={e=>{e.stopPropagation();onRemove();}} style={{marginLeft:4,padding:"1px 6px",borderRadius:4,border:"none",background:"transparent",color:T.textSub,fontSize:10,cursor:"pointer"}}><I.X s={10}/></button>}
+    </div>
     </div>
   );
 }
@@ -2864,7 +2997,7 @@ function YFInsights({symbol,price,T}){
 
   if(loading) return(
     <div style={{padding:"16px",background:T.insightBg,border:`1px solid ${T.insightBorder}`,borderRadius:12}}>
-      <div style={{fontSize:12,color:T.textSub,fontFamily:T.sans,animation:"pulse 1.2s infinite"}}>Loading analyst data…</div>
+      <LoadTimer T={T} compact label="Loading analyst data" expected={6}/>
     </div>
   );
 
@@ -3117,8 +3250,9 @@ Return ONLY valid JSON:
       {error&&<div style={{fontSize:11,color:T.down,marginBottom:10,fontFamily:T.sans}}>⚠ {error}</div>}
       <div style={{fontSize:12,color:T.textSub,marginBottom:16,lineHeight:1.55}}>Claude will analyze {symbol}'s analyst consensus,<br/>earnings history, and recent news — no extra API file needed.</div>
       <button onClick={generate} disabled={loading} style={{padding:"10px 24px",borderRadius:10,border:"none",cursor:loading?"not-allowed":"pointer",background:loading?T.border:T.accent,color:loading?T.textSub:T.accentInk,fontSize:13,fontWeight:700}}>
-        {loading?"Generating… (10-20s)":"✦ Generate AI Analysis"}
+        {loading?"Analyzing…":"✦ Generate AI Analysis"}
       </button>
+      {loading&&<div style={{marginTop:14}}><LoadTimer T={T} label="Reading analyst data, earnings and news" expected={18}/></div>}
     </div>
   );
 
@@ -3161,7 +3295,7 @@ function StockNews({symbol,T}){
     fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
       .then(r=>r.ok?r.json():[]).then(n=>setNews(n||[])).catch(()=>{}).finally(()=>setLoading(false));
   },[symbol]);
-  if(loading)return(<div style={{padding:16,fontSize:11,color:T.textSub}}>Loading news…</div>);
+  if(loading)return(<div style={{padding:16}}><LoadTimer T={T} compact label="Loading news" expected={6}/></div>);
   if(!news.length)return(<div style={{padding:16,fontSize:11,color:T.textSub}}>No recent news for {symbol}.</div>);
   return(
     <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden"}}>
@@ -3225,8 +3359,8 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
       <ChartControls tf={tf} setTf={setTf} chartMode={chartMode} setChartMode={setChartMode} ind={ind} toggleInd={toggleInd} T={T}/>
       <div style={{background:T.surface,borderRadius:12,padding:"10px 8px",marginBottom:8,border:`1px solid ${T.border}`,boxShadow:T.shadow,minHeight:220}}>
         {chartLoading
-          ?<div style={{height:210,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:T.textSub,fontSize:12,fontFamily:T.sans}}>
-            <span style={{animation:"pulse 1.2s infinite",display:"inline-block"}}>⟳</span> Fetching real-time chart…
+          ?<div style={{height:210,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}}>
+            <LoadTimer T={T} label="Loading chart" expected={4}/>
            </div>
           :chartData.length>0&&(chartMode==="candle"
             ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={tf} chartH={window.innerWidth<640?520:210}/>
@@ -3631,11 +3765,42 @@ function AnswerText({text,T}){
     </div>
   );
 }
+/* Progress + elapsed-seconds indicator for anything that takes a while.
+   Pass done/total for a real progress bar, or just expected seconds for an eased one. */
+function LoadTimer({T,label,expected,done,total,compact,note}){
+  const [sec,setSec]=useState(0);
+  useEffect(()=>{
+    const t0=Date.now();
+    const id=setInterval(()=>setSec(Math.floor((Date.now()-t0)/1000)),250);
+    return()=>clearInterval(id);
+  },[]);
+  const exp=expected||15;
+  const real=total>0;
+  const pct=real?Math.min(100,Math.round((done||0)/total*100)):Math.min(92,Math.round((1-Math.exp(-sec/exp*1.5))*100));
+  const slow=sec>exp*1.6;
+  return(
+    <div role="status" aria-live="polite" style={{width:"100%",maxWidth:compact?"none":420,margin:compact?0:"0 auto",padding:compact?"8px 0":"6px 0",fontFamily:T.sans}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,fontSize:compact?11:12,color:T.text}}>
+        <span style={{animation:"pulse 1.4s infinite",color:T.accent}}>●</span>
+        <span style={{flex:1,minWidth:0}}>{label||"Loading"}{real?` (${done||0}/${total})`:""}</span>
+        <span style={{fontFamily:T.mono,fontSize:11,color:T.textSub,fontVariantNumeric:"tabular-nums"}}>{sec}s</span>
+      </div>
+      <div style={{height:4,borderRadius:2,background:T.border,marginTop:6,overflow:"hidden"}}>
+        <div style={{height:"100%",width:pct+"%",background:T.accent,borderRadius:2,transition:"width .35s ease"}}/>
+      </div>
+      <div style={{fontSize:10,color:T.textSub,marginTop:4}}>{slow?"Taking longer than usual. It will finish, or show an error.":(note||(real?"":"Usually about "+exp+" seconds"))}</div>
+    </div>
+  );
+}
+
 const CONCIERGE_ASKS=[
-  "Which of my stocks report earnings this week?",
   "What moved the most today, and why?",
+  "Which of my stocks report earnings this week?",
   "Which of my stocks have caution flags?",
   "Explain my riskiest stock in plain English",
+  "Which stock looks most oversold right now?",
+  "What should I watch in the market tomorrow?",
+  "Summarize my watchlist in 3 bullets",
 ];
 function buildConciergeContext(stocks,healthMap,earnMap){
   return stocks.filter(s=>s.p>0).slice(0,40).map(s=>{
@@ -3706,7 +3871,10 @@ function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,deta
   const [q,setQ]=useState("");
   const [busy,setBusy]=useState(false);
   const [plan,setPlan]=useState(null);
+  const [picked,setPicked]=useState(null);
+  const [sent,setSent]=useState(false);
   const endRef=useRef(null);
+  const pickAsk=a=>{if(busy)return;setPicked(a);setTimeout(()=>setPicked(null),700);ask(a);};
   useEffect(()=>{try{localStorage.setItem("screener_cc_open",open?"1":"0");}catch{}},[open]);
   useEffect(()=>{if(endRef.current&&msgs.length)endRef.current.scrollIntoView({block:"nearest",behavior:"smooth"});},[msgs,busy]);
   const ask=async(text)=>{
@@ -3714,7 +3882,7 @@ function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,deta
     if(!question||busy)return;
     const history=msgs.filter(m=>!m.error).map(m=>({role:m.role,content:m.text}));
     setMsgs(p=>[...p,{role:"user",text:question}]);
-    setQ("");setBusy(true);
+    setQ("");setBusy(true);setSent(true);setTimeout(()=>setSent(false),520);
     try{
       const res=await fetch("/api/concierge",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question,history,symbols,detail:detail||"standard",context:buildConciergeContext(stocks,healthMap,earnMap)})});
       const d=await res.json().catch(()=>({}));
@@ -3728,9 +3896,14 @@ function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,deta
   const longChat=msgs.length>=4||msgs.reduce((n,m)=>n+m.text.length,0)>1800;
   const entry=(
     <>
+    <div className="cc-rail" role="group" aria-label="Suggested questions" style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,marginBottom:2,WebkitOverflowScrolling:"touch"}}>
+      {CONCIERGE_ASKS.map(a=>(
+        <button key={a} type="button" disabled={busy} onClick={()=>pickAsk(a)} className={"cc-chip"+(picked===a?" picked":"")} style={{flex:"0 0 auto",padding:"6px 12px",borderRadius:16,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:11,cursor:busy?"default":"pointer",opacity:busy?0.55:1,fontFamily:T.sans,whiteSpace:"nowrap"}}>{picked===a?"✓ ":""}{a}</button>
+      ))}
+    </div>
     <form onSubmit={e=>{e.preventDefault();ask(q);}} style={{display:"flex",gap:8}}>
       <input value={q} onChange={e=>setQ(e.target.value)} maxLength={500} placeholder="e.g. Why is NVDA moving today?" aria-label="Ask the concierge a question" style={{flex:1,minWidth:0,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:13,fontFamily:T.sans,outline:"none"}}/>
-      <button type="submit" disabled={busy||q.trim().length<2} style={{padding:"9px 16px",borderRadius:8,border:"none",background:T.accent,color:T.accentInk,fontSize:12,fontWeight:600,cursor:busy||q.trim().length<2?"default":"pointer",opacity:busy||q.trim().length<2?0.5:1,fontFamily:T.sans}}>Ask</button>
+      <button type="submit" disabled={busy||q.trim().length<2} className={"cc-send"+(sent?" sent":"")} style={{padding:"9px 16px",borderRadius:8,border:"none",background:T.accent,color:T.accentInk,fontSize:12,fontWeight:600,cursor:busy||q.trim().length<2?"default":"pointer",opacity:busy||q.trim().length<2?0.5:1,fontFamily:T.sans}}>Ask</button>
     </form>
     <div style={{padding:"6px 2px 0",fontSize:10,color:T.textSub,lineHeight:1.5}}>{plan&&plan.limit?<b style={{fontFamily:T.mono,color:T.text}}>{plan.left} of {plan.limit} answers left today ({plan.tier}). </b>:null}AI can be wrong or out of date. Check the sources. Educational tool, not financial advice.</div>
     </>
@@ -3746,17 +3919,12 @@ function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,deta
         <div style={{borderTop:`1px solid ${T.border}`}}>
           <div style={{maxHeight:embedded?"none":420,minHeight:embedded?260:0,overflowY:embedded?"visible":"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
             {msgs.length===0&&(
-              <div>
-                <div style={{fontSize:12,color:T.textSub,marginBottom:8,lineHeight:1.5}}>Try one of these, or type your own question below.</div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {CONCIERGE_ASKS.map(a=>(<button key={a} onClick={()=>ask(a)} style={{padding:"6px 11px",borderRadius:16,border:`1px solid ${T.border}`,background:T.surfaceB,color:T.text,fontSize:11,cursor:"pointer",fontFamily:T.sans}}>{a}</button>))}
-                </div>
-              </div>
+              <div className="cc-msg" style={{fontSize:12,color:T.textSub,lineHeight:1.55}}>Tap a suggestion below, or type your own question. Answers use live quotes, the news and the web, and cite sources.</div>
             )}
             {msgs.map((m,i)=>(
               m.role==="user"
-                ?<div key={i} style={{alignSelf:"flex-end",maxWidth:"85%",background:T.accentBg,border:`1px solid ${T.border}`,color:T.text,borderRadius:12,padding:"8px 12px",fontSize:12.5,lineHeight:1.5}}>{m.text}</div>
-                :<div key={i} style={{alignSelf:"flex-start",maxWidth:"94%",background:T.surfaceB,border:`1px solid ${m.error?T.down:T.border}`,color:m.error?T.down:T.text,borderRadius:12,padding:"10px 13px",fontSize:12.5,lineHeight:1.6}}>
+                ?<div key={i} className="cc-msg" style={{alignSelf:"flex-end",maxWidth:"85%",background:T.accentBg,border:`1px solid ${T.border}`,color:T.text,borderRadius:12,padding:"8px 12px",fontSize:12.5,lineHeight:1.5}}>{m.text}</div>
+                :<div key={i} className="cc-msg" style={{alignSelf:"flex-start",maxWidth:"94%",background:T.surfaceB,border:`1px solid ${m.error?T.down:T.border}`,color:m.error?T.down:T.text,borderRadius:12,padding:"10px 13px",fontSize:12.5,lineHeight:1.6}}>
                   <AnswerText text={m.text} T={T}/>
                   {m.sources&&m.sources.length>0&&(
                     <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`,fontSize:10.5,color:T.textSub,display:"flex",flexWrap:"wrap",gap:"4px 10px"}}>
@@ -3766,7 +3934,7 @@ function ConciergePanel({T,stocks,healthMap,earnMap,symbols,embedded,mobile,deta
                   )}
                 </div>
             ))}
-            {busy&&<div style={{alignSelf:"flex-start",fontSize:12,color:T.textSub,padding:"4px 2px"}}>Checking live data and the news…</div>}
+            {busy&&<div className="cc-msg" style={{alignSelf:"flex-start",width:"min(100%,420px)",background:T.surfaceB,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 13px"}}><div className="cc-dots" aria-hidden="true" style={{marginBottom:6}}><span/><span/><span/></div><LoadTimer T={T} compact label="Checking live data and the news" expected={14}/></div>}
             <div ref={endRef}/>
           </div>
           {!embedded&&<div style={{padding:"10px 16px 12px",borderTop:`1px solid ${T.border}`}}>{entry}</div>}
@@ -3906,7 +4074,7 @@ function PlanCard({T}){
     if(st.kind==="busy")return;
     setSt({kind:"busy",msg:""});
     try{
-      const r=await fetch("/api/waitlist",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:email.trim(),source:"app",website:hp})});
+      const r=await fetch("/api/subscribe?kind=beta",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:email.trim(),source:"app",website:hp})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Could not sign up right now.");
       if(d.code){save(d.code);setSt({kind:"ok",msg:"You are in the beta. Your access code "+d.code+" is saved on this device. Keep a copy."});}
@@ -4317,6 +4485,26 @@ export default function StockScreener(){
         ::-webkit-scrollbar{width:4px;height:4px}
         ::-webkit-scrollbar-thumb{background:${T.border};border-radius:2px}
         input::placeholder{color:${T.textSub}}
+        .lr-wrap{container-type:inline-size}
+        @container (max-width:470px){.lr-spark{display:none!important}}
+        .cc-chip{transition:transform .15s ease,background .15s ease,border-color .15s ease,color .15s ease;will-change:transform}
+        .cc-chip:not(:disabled):hover{transform:translateY(-2px);background:${T.accentBg}!important;border-color:${T.accent}!important;color:${T.accent}!important}
+        .cc-chip:not(:disabled):active{transform:scale(.95)}
+        .cc-chip:focus-visible,.cc-send:focus-visible{outline:2px solid ${T.accent};outline-offset:2px}
+        .cc-chip.picked{animation:ccPick .6s ease;background:${T.accentBg}!important;border-color:${T.accent}!important;color:${T.accent}!important}
+        .cc-send{transition:transform .15s ease,opacity .15s ease,filter .15s ease}
+        .cc-send:not(:disabled):hover{transform:translateY(-1px);filter:brightness(1.08)}
+        .cc-send:not(:disabled):active{transform:scale(.94)}
+        .cc-send.sent{animation:ccSend .5s ease}
+        .cc-msg{animation:ccIn .28s cubic-bezier(.2,.8,.2,1)}
+        .cc-dots span{display:inline-block;width:6px;height:6px;margin-right:4px;border-radius:50%;background:${T.accent};animation:ccDot 1.1s infinite ease-in-out}
+        .cc-dots span:nth-child(2){animation-delay:.15s}.cc-dots span:nth-child(3){animation-delay:.3s}
+        .cc-rail{scrollbar-width:none}.cc-rail::-webkit-scrollbar{display:none}
+        @keyframes ccPick{0%{transform:scale(1)}35%{transform:scale(1.06)}100%{transform:scale(1)}}
+        @keyframes ccSend{0%{transform:scale(1)}40%{transform:scale(.92) translateX(2px)}100%{transform:scale(1)}}
+        @keyframes ccIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+        @keyframes ccDot{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-4px);opacity:1}}
+        @media (prefers-reduced-motion:reduce){.cc-chip,.cc-send,.cc-msg,.cc-dots span{animation:none!important;transition:none!important}}
         ${prefs.motion?"":"*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}"}
       `}</style>
 
