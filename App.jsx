@@ -1108,7 +1108,7 @@ function buildVolumeProfile(data, buckets=30){
 const CC_VW=900,CC_VH=210,CC_PAD={t:8,r:44,b:22,l:54};
 const CC_W=CC_VW-CC_PAD.l-CC_PAD.r, CC_H=CC_VH-CC_PAD.t-CC_PAD.b;
 
-function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T,chartH=CC_VH,fs=1,big=false,onHover,hideTip,onRes,initWin,canFiner=true,canCoarser=true}){
+function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,showSignals,showVolProfile,symbol,tf,T,chartH=CC_VH,fs=1,big=false,onHover,hideTip,onRes,initWin,canFiner=true,canCoarser=true,onView}){
   // 1:1 pixel SVG: width follows the container, height is chartH px, so text stays crisp and readable
   const [boxW,setBoxW]=useState(0);
   const bandH=big?(boxW>0&&boxW<560?82:44):0;
@@ -1156,6 +1156,7 @@ function CandleChart({data,showEMA,showSupport,srLevels,showVWAP,showBB,signals,
       }
     }
   },[ident,data.length]);// eslint-disable-line
+  useEffect(()=>{if(onView)onView(vStart,vEnd,data.length);},[vStart,vEnd,data.length]);// eslint-disable-line
   // Auto-resolution: asking the chart to zoom past its detail → request finer / coarser candles
   const resRef=useRef({});resRef.current={onRes,canCoarser};
   const outAt=useRef(0);
@@ -3538,6 +3539,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
   const [initWin,setInitWin]=useState(null);   // time window to keep when zoom switches resolution
   const [resNote,setResNote]=useState("");
   const [blocked,setBlocked]=useState({});
+  const [view,setView]=useState(null);
   const resBusy=useRef(false);
   const shownSym=useRef(null);
   const pickTf=t=>{setInitWin(null);setResNote("");setTf(t);};
@@ -3589,6 +3591,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
   const canCoarser=!!nextRes(chartTf,"out")&&!blocked[selected.s+"|"+chartTf+"|out"];
 
   const chartData=useMemo(()=>enrich(rawChart),[rawChart]);
+  const panelData=useMemo(()=>view&&view.n===chartData.length?chartData.slice(view.a,view.b):chartData,[chartData,view]);
   const sr=useMemo(()=>TIMEFRAMES[chartTf]?.barMin>=1440?findSR(rawChart):[],[rawChart,chartTf]);
   const signals=useMemo(()=>ind.signals?detectSignals(chartData):[],[chartData,ind.signals]);
   const ch=pct(selected.p,selected.pc),isUp=ch>=0;
@@ -3610,7 +3613,7 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
           <LoadTimer T={T} label="Loading chart" expected={4}/>
          </div>
         :chartData.length>0&&(chartMode==="candle"
-          ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={chartTf} onRes={onRes} initWin={initWin} canFiner={canFiner} canCoarser={canCoarser} chartH={big?fullH:(mobW?300:260)} big={big} fs={big?(mobW?1.1:1.3):1} hideTip={big} onHover={big?setHoverBar:undefined}/>
+          ?<CandleChart data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} showVolProfile={ind.volProfile} T={T} symbol={selected.s} tf={chartTf} onRes={onRes} initWin={initWin} canFiner={canFiner} canCoarser={canCoarser} onView={(a,b,n)=>setView(v=>v&&v.a===a&&v.b===b&&v.n===n?v:{a,b,n})} chartH={big?fullH:(mobW?300:260)} big={big} fs={big?(mobW?1.1:1.3):1} hideTip={big} onHover={big?setHoverBar:undefined}/>
           :<LineChartView data={chartData} showEMA={ind.ema} showSupport={ind.support} srLevels={sr} showVWAP={ind.vwap} showBB={ind.bb} signals={signals} showSignals={ind.signals} T={T} height={big?fullH:195} accent={isUp?T.up:T.down}/>
         )
       }
@@ -3619,9 +3622,9 @@ function StockDetail({selected,names,T,onClose,onSetAlert,health,healthLoading,a
   const pnlStyle={background:T.surface,borderRadius:10,padding:"10px 8px 6px",marginBottom:8,border:`1px solid ${T.border}`};
   const pnlLbl={fontSize:big=>big?11:8,color:T.textSub,paddingLeft:4,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:T.sans};
   const panels=(big)=>(<>
-    {ind.volume&&<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>Volume</div><VolumePanel data={chartData} T={T} h={big?(mobW?70:96):50} fs={big?10:0}/></div>}
-    {ind.macd&&<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>MACD (12, 26, 9)</div><MACDPanel data={chartData} T={T} h={big?(mobW?90:120):70} fs={big?10:0}/></div>}
-    {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={chartData} T={T} h={big?(mobW?90:120):80} fs={big?10:0}/></div>);})()}
+    {ind.volume&&<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>Volume</div><VolumePanel data={panelData} T={T} h={big?(mobW?70:96):50} fs={big?10:0}/></div>}
+    {ind.macd&&<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>MACD (12, 26, 9)</div><MACDPanel data={panelData} T={T} h={big?(mobW?90:120):70} fs={big?10:0}/></div>}
+    {ind.rsi&&(()=>{const last=chartData.filter(d=>d.rsi!=null).at(-1)?.rsi;return(<div style={pnlStyle}><div style={{...pnlLbl,fontSize:big?11:8}}>RSI (14) <span style={{color:last>=70?T.down:last<=30?T.up:T.ema9,marginLeft:4}}>{last?.toFixed(1)}</span></div><RSIPanel data={panelData} T={T} h={big?(mobW?90:120):80} fs={big?10:0}/></div>);})()}
   </>);
   return(
     <div style={{animation:"fadeUp 0.18s ease"}}>
